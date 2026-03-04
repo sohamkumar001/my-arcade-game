@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Void Runner: Asteroid Avoidance</title>
+    <style>
+        :root {
+            --neon-blue: #00d4ff;
+            --neon-pink: #ff007b;
+            --space-bg: #050508;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: var(--space-bg);
+            color: white;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            overflow: hidden;
+            touch-action: none;
+        }
+
+        #game-wrapper {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        canvas {
+            display: block;
+            box-shadow: 0 0 20px rgba(0, 212, 255, 0.2);
+        }
+
+        /* UI Overlays */
+        .ui-layer {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        #score-display {
+            font-size: 24px;
+            font-weight: bold;
+            color: var(--neon-blue);
+            text-shadow: 0 0 10px var(--neon-blue);
+        }
+
+        #menu-overlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(5, 5, 8, 0.85);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 20;
+            text-align: center;
+        }
+
+        h1 {
+            font-size: 3rem;
+            margin: 0;
+            background: linear-gradient(to right, var(--neon-blue), var(--neon-pink));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: 5px;
+        }
+
+        button {
+            margin-top: 20px;
+            padding: 12px 40px;
+            background: transparent;
+            border: 2px solid var(--neon-blue);
+            color: var(--neon-blue);
+            font-size: 1.2rem;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: 0.3s;
+        }
+
+        button:hover {
+            background: var(--neon-blue);
+            color: var(--space-bg);
+            box-shadow: 0 0 20px var(--neon-blue);
+        }
+
+        /* Virtual Joystick */
+        #joystick-zone {
+            position: absolute;
+            bottom: 40px;
+            left: 40px;
+            width: 120px;
+            height: 120px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 50%;
+            display: none; /* Shown on touch devices */
+            border: 1px solid rgba(0, 212, 255, 0.3);
+        }
+
+        #joystick-handle {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 50px;
+            height: 50px;
+            background: var(--neon-blue);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            opacity: 0.6;
+        }
+
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+
+<div id="game-wrapper">
+    <div class="ui-layer">
+        <div id="score-display">SCORE: 0</div>
+    </div>
+
+    <div id="menu-overlay">
+        <h1 id="title">VOID RUNNER</h1>
+        <p id="final-score" class="hidden"></p>
+        <button id="action-btn">Launch Ship</button>
+        <p style="font-size: 0.8rem; margin-top: 15px; opacity: 0.6;">WASD/ARROWS to Move | P to Pause</p>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+    
+    <div id="joystick-zone">
+        <div id="joystick-handle"></div>
+    </div>
+</div>
+
+<script>
+/**
+ * CORE CONSTANTS & UTILS
+ */
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const scoreEl = document.getElementById('score-display');
+const menu = document.getElementById('menu-overlay');
+const actionBtn = document.getElementById('action-btn');
+const finalScoreText = document.getElementById('final-score');
+const joystickZone = document.getElementById('joystick-zone');
+const joystickHandle = document.getElementById('joystick-handle');
+
+let width, height;
+let score = 0;
+let gameRunning = false;
+let isPaused = false;
+let lastTime = 0;
+let asteroidTimer = 0;
+let asteroidInterval = 1000;
+
+// Game Entities
+let player;
+let asteroids = [];
+let particles = [];
+let stars = [];
+
+// Input State
+const keys = {};
+let touchX = 0, touchY = 0;
+let isTouching = false;
+
+/**
+ * CLASSES
+ */
+class Player {
+    constructor() {
+        this.reset();
+    }
+    reset() {
+        this.x = width / 2;
+        this.y = height / 2;
+        this.radius = 15;
+        this.speed = 5;
+        this.angle = 0;
+    }
+    update() {
+        // Keyboard movement
+        let vx = 0;
+        let vy = 0;
+        if (keys['ArrowUp'] || keys['KeyW']) vy -= 1;
+        if (keys['ArrowDown'] || keys['KeyS']) vy += 1;
+        if (keys['ArrowLeft'] || keys['KeyA']) vx -= 1;
+        if (keys['ArrowRight'] || keys['KeyD']) vx += 1;
+
+        // Joystick/Touch movement
+        if (isTouching) {
+            vx = touchX;
+            vy = touchY;
+        }
+
+        // Normalize speed
+        const length = Math.sqrt(vx * vx + vy * vy);
+        if (length > 0) {
+            this.x += (vx / length) * this.speed;
+            this.y += (vy / length) * this.speed;
+            this.angle = Math.atan2(vy, vx);
+        }
+
+        // Screen boundaries
+        this.x = Math.max(this.radius, Math.min(width - this.radius, this.x));
+        this.y = Math.max(this.radius, Math.min(height - this.radius, this.y));
+    }
+    draw() {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.angle);
+        
+        // Ship Body (Triangle)
+        ctx.beginPath();
+        ctx.moveTo(15, 0);
+        ctx.lineTo(-10, -10);
+        ctx.lineTo(-10, 10);
+        ctx.closePath();
+        
+        ctx.strokeStyle = '#00d4ff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = '#00d4ff';
+        ctx.stroke();
+        
+        // Engine Glow
+        if (gameRunning) {
+            ctx.beginPath();
+            ctx.moveTo(-10, -5);
+            ctx.lineTo(-20, 0);
+            ctx.lineTo(-10, 5);
+            ctx.fillStyle = '#ff007b';
+            ctx.fill();
+        }
+        ctx.restore();
+    }
+}
+
+class Asteroid {
+    constructor(speedMult) {
+        this.radius = Math.random() * 20 + 10;
+        // Spawn from random edge
+        const edge = Math.floor(Math.random() * 4);
+        if (edge === 0) { // Top
+            this.x = Math.random() * width;
+            this.y = -this.radius;
+        } else if (edge === 1) { // Right
+            this.x = width + this.radius;
+            this.y = Math.random() * height;
+        } else if (edge === 2) { // Bottom
+            this.x = Math.random() * width;
+            this.y = height + this.radius;
+        } else { // Left
+            this.x = -this.radius;
+            this.y = Math.random() * height;
+        }
+
+        // Target a point near the player
+        const targetX = player.x + (Math.random() - 0.5) * 200;
+        const targetY = player.y + (Math.random() - 0.5) * 200;
+        const angle = Math.atan2(targetY - this.y, targetX - this.x);
+        
+        const baseSpeed = Math.random() * 2 + 1;
+        this.vx = Math.cos(angle) * baseSpeed * speedMult;
+        this.vy = Math.sin(angle) * baseSpeed * speedMult;
+        this.rotation = 0;
+        this.rotationSpeed = (Math.random() - 0.5) * 0.1;
+    }
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.rotation += this.rotationSpeed;
+    }
+    draw() {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.rotation);
+        ctx.beginPath();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1.5;
+        // Draw jagged rock
+        for (let i = 0; i < 8; i++) {
+            const angle = (i / 8) * Math.PI * 2;
+            const r = this.radius * (0.8 + Math.random() * 0.4);
+            const px = Math.cos(angle) * r;
+            const py = Math.sin(angle) * r;
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.stroke();
+        ctx.restore();
+    }
+}
+
+class Particle {
+    constructor(x, y, color) {
+        this.x = x;
+        this.y = y;
+        this.color = color;
+        this.radius = Math.random() * 3;
+        this.vx = (Math.random() - 0.5) * 10;
+        this.vy = (Math.random() - 0.5) * 10;
+        this.alpha = 1;
+    }
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.alpha -= 0.02;
+    }
+    draw() {
+        ctx.save();
+        ctx.globalAlpha = this.alpha;
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+}
+
+/**
+ * ENGINE LOGIC
+ */
+function init() {
+    resize();
+    player = new Player();
+    
+    // Background stars
+    stars = [];
+    for(let i=0; i<150; i++) {
+        stars.push({
+            x: Math.random() * width,
+            y: Math.random() * height,
+            size: Math.random() * 2,
+            opacity: Math.random()
+        });
+    }
+}
+
+function resize() {
+    width = canvas.width = window.innerWidth;
+    height = canvas.height = window.innerHeight;
+}
+
+window.addEventListener('resize', resize);
+
+function spawnAsteroid(deltaTime) {
+    asteroidTimer += deltaTime;
+    const speedMult = 1 + score / 5000;
+    const frequency = Math.max(200, asteroidInterval - (score / 10));
+
+    if (asteroidTimer > frequency) {
+        asteroids.push(new Asteroid(speedMult));
+        asteroidTimer = 0;
+    }
+}
+
+function checkCollisions() {
+    for (let i = 0; i < asteroids.length; i++) {
+        const a = asteroids[i];
+        const dist = Math.hypot(player.x - a.x, player.y - a.y);
+        
+        if (dist < player.radius + a.radius) {
+            explode(player.x, player.y, '#00d4ff');
+            explode(a.x, a.y, '#ffffff');
+            gameOver();
+        }
+    }
+}
+
+function explode(x, y, color) {
+    for (let i = 0; i < 20; i++) {
+        particles.push(new Particle(x, y, color));
+    }
+}
+
+function gameOver() {
+    gameRunning = false;
+    finalScoreText.innerText = `DISTANCE COVERED: ${Math.floor(score)}`;
+    finalScoreText.classList.remove('hidden');
+    document.getElementById('title').innerText = "SYSTEM FAILURE";
+    actionBtn.innerText = "Reboot Ship";
+    menu.classList.remove('hidden');
+}
+
+/**
+ * MAIN LOOP
+ */
+function animate(timeStamp) {
+    if (isPaused) return;
+
+    const deltaTime = timeStamp - lastTime;
+    lastTime = timeStamp;
+
+    ctx.fillStyle = '#050508';
+    ctx.fillRect(0, 0, width, height);
+
+    // Draw Background
+    ctx.fillStyle = '#fff';
+    stars.forEach(s => {
+        ctx.globalAlpha = s.opacity;
+        ctx.fillRect(s.x, s.y, s.size, s.size);
+    });
+    ctx.globalAlpha = 1;
+
+    if (gameRunning) {
+        score += deltaTime * 0.1;
+        scoreEl.innerText = `SCORE: ${Math.floor(score)}`;
+        
+        player.update();
+        spawnAsteroid(deltaTime);
+        checkCollisions();
+    }
+
+    // Update & Draw Asteroids
+    for (let i = asteroids.length - 1; i >= 0; i--) {
+        asteroids[i].update();
+        asteroids[i].draw();
+        
+        // Remove off-screen
+        if (asteroids[i].x < -100 || asteroids[i].x > width + 100 ||
+            asteroids[i].y < -100 || asteroids[i].y > height + 100) {
+            asteroids.splice(i, 1);
+        }
+    }
+
+    // Update & Draw Particles
+    for (let i = particles.length - 1; i >= 0; i--) {
+        particles[i].update();
+        particles[i].draw();
+        if (particles[i].alpha <= 0) particles.splice(i, 1);
+    }
+
+    player.draw();
+
+    requestAnimationFrame(animate);
+}
+
+/**
+ * CONTROLS
+ */
+window.addEventListener('keydown', e => {
+    keys[e.code] = true;
+    if (e.code === 'KeyP') {
+        isPaused = !isPaused;
+        if (!isPaused) {
+            lastTime = performance.now();
+            animate(lastTime);
+        }
+    }
+});
+window.addEventListener('keyup', e => keys[e.code] = false);
+
+// Touch/Joystick Controls
+window.addEventListener('touchstart', e => {
+    if (!gameRunning) return;
+    joystickZone.style.display = 'block';
+    const touch = e.touches[0];
+    const rect = joystickZone.getBoundingClientRect();
+    joystickZone.style.left = `${touch.clientX - 60}px`;
+    joystickZone.style.top = `${touch.clientY - 60}px`;
+    isTouching = true;
+}, {passive: false});
+
+window.addEventListener('touchmove', e => {
+    if (!isTouching) return;
+    const touch = e.touches[0];
+    const rect = joystickZone.getBoundingClientRect();
+    const centerX = rect.left + 60;
+    const centerY = rect.top + 60;
+    
+    let dx = touch.clientX - centerX;
+    let dy = touch.clientY - centerY;
+    
+    const dist = Math.min(60, Math.hypot(dx, dy));
+    const angle = Math.atan2(dy, dx);
+    
+    touchX = Math.cos(angle) * (dist / 60);
+    touchY = Math.sin(angle) * (dist / 60);
+    
+    joystickHandle.style.transform = `translate(calc(-50% + ${Math.cos(angle)*dist}px), calc(-50% + ${Math.sin(angle)*dist}px))`;
+}, {passive: false});
+
+window.addEventListener('touchend', () => {
+    isTouching = false;
+    joystickZone.style.display = 'none';
+    touchX = 0;
+    touchY = 0;
+});
+
+actionBtn.addEventListener('click', () => {
+    score = 0;
+    asteroids = [];
+    particles = [];
+    player.reset();
+    gameRunning = true;
+    isPaused = false;
+    menu.classList.add('hidden');
+    lastTime = performance.now();
+    requestAnimationFrame(animate);
+});
+
+// Initialization
+init();
+requestAnimationFrame(animate);
+
+</script>
+</body>
+</html>

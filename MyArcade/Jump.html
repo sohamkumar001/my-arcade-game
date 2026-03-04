@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neon Runner - Endless Survival</title>
+    <style>
+        :root {
+            --bg-color: #0a0a0a;
+            --text-color: #00f2ff;
+            --accent: #ff007b;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: var(--bg-color);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            color: var(--text-color);
+        }
+
+        #game-container {
+            position: relative;
+            width: 800px;
+            height: 400px;
+            box-shadow: 0 0 50px rgba(0, 242, 255, 0.2);
+            border: 2px solid var(--text-color);
+            background: #000;
+        }
+
+        canvas {
+            display: block;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            right: 20px;
+            pointer-events: none;
+            display: flex;
+            justify-content: space-between;
+            font-size: 24px;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+        }
+
+        .hidden { display: none !important; }
+
+        button {
+            padding: 15px 40px;
+            font-size: 20px;
+            background: transparent;
+            color: var(--text-color);
+            border: 2px solid var(--text-color);
+            cursor: pointer;
+            transition: 0.3s;
+            text-transform: uppercase;
+        }
+
+        button:hover {
+            background: var(--text-color);
+            color: #000;
+            box-shadow: 0 0 20px var(--text-color);
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <div id="ui-layer">
+        <div id="score">Score: 0</div>
+        <div id="high-score">High: 0</div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="overlay">
+        <h1 id="title">NEON RUNNER</h1>
+        <p id="final-score" class="hidden"></p>
+        <button id="start-btn">Start Game</button>
+        <p style="margin-top: 20px; font-size: 0.8rem;">SPACE / TAP to Jump</p>
+    </div>
+</div>
+
+<script>
+/**
+ * AUDIO ENGINE
+ * Using Web Audio API for synthetic sounds (no external files needed)
+ */
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+function playSound(freq, type, duration) {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + duration);
+}
+
+/**
+ * GAME ENGINE
+ */
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const scoreEl = document.getElementById('score');
+const highScoreEl = document.getElementById('high-score');
+const overlay = document.getElementById('overlay');
+const startBtn = document.getElementById('start-btn');
+const finalScoreEl = document.getElementById('final-score');
+
+// Settings
+canvas.width = 800;
+canvas.height = 400;
+
+let gameRunning = false;
+let score = 0;
+let highScore = localStorage.getItem('neonHighScore') || 0;
+let gameSpeed = 5;
+let frameCount = 0;
+let isDarkMode = true;
+
+// Assets/Entities
+const player = {
+    x: 80,
+    y: 300,
+    width: 40,
+    height: 40,
+    dy: 0,
+    jumpForce: 12,
+    gravity: 0.6,
+    grounded: false,
+    color: '#ff007b'
+};
+
+let obstacles = [];
+let stars = []; // For parallax background
+
+// Initialize Stars for Parallax
+for(let i = 0; i < 50; i++) {
+    stars.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * (canvas.height - 100),
+        size: Math.random() * 2,
+        speed: Math.random() * 0.5 + 0.1
+    });
+}
+
+/**
+ * CORE LOGIC
+ */
+function update() {
+    if (!gameRunning) return;
+
+    frameCount++;
+    score += 1;
+    scoreEl.innerText = `Score: ${Math.floor(score/10)}`;
+
+    // Handle Theme Switch (Every 500 score units)
+    if (Math.floor(score/10) % 50 === 0 && score > 10) {
+        isDarkMode = (Math.floor(score/500) % 2 === 0);
+    }
+
+    // Physics
+    player.dy += player.gravity;
+    player.y += player.dy;
+
+    if (player.y + player.height > canvas.height - 50) {
+        player.y = canvas.height - 50 - player.height;
+        player.dy = 0;
+        player.grounded = true;
+    }
+
+    // Speed scaling
+    gameSpeed += 0.001;
+
+    // Obstacle Spawning
+    if (frameCount % Math.max(20, Math.floor(100 - gameSpeed)) === 0) {
+        obstacles.push({
+            x: canvas.width,
+            y: canvas.height - 90,
+            width: 30,
+            height: 40,
+            color: '#00f2ff'
+        });
+    }
+
+    // Update Obstacles
+    for (let i = obstacles.length - 1; i >= 0; i--) {
+        obstacles[i].x -= gameSpeed;
+
+        // Collision Detection
+        if (
+            player.x < obstacles[i].x + obstacles[i].width &&
+            player.x + player.width > obstacles[i].x &&
+            player.y < obstacles[i].y + obstacles[i].height &&
+            player.y + player.height > obstacles[i].y
+        ) {
+            gameOver();
+        }
+
+        if (obstacles[i].x + obstacles[i].width < 0) {
+            obstacles.splice(i, 1);
+        }
+    }
+
+    // Update Stars (Parallax)
+    stars.forEach(star => {
+        star.x -= star.speed * (gameSpeed / 2);
+        if (star.x < 0) star.x = canvas.width;
+    });
+}
+
+function draw() {
+    // Clear Canvas with Theme color
+    ctx.fillStyle = isDarkMode ? '#0a0a0a' : '#e0e0e0';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Draw Stars (Parallax)
+    ctx.fillStyle = isDarkMode ? '#fff' : '#666';
+    stars.forEach(star => {
+        ctx.beginPath();
+        ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+        ctx.fill();
+    });
+
+    // Draw Ground
+    ctx.strokeStyle = isDarkMode ? '#00f2ff' : '#333';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, canvas.height - 50);
+    ctx.lineTo(canvas.width, canvas.height - 50);
+    ctx.stroke();
+
+    // Draw Player
+    ctx.fillStyle = player.color;
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = player.color;
+    ctx.fillRect(player.x, player.y, player.width, player.height);
+    ctx.shadowBlur = 0;
+
+    // Draw Obstacles
+    ctx.fillStyle = isDarkMode ? '#00f2ff' : '#ff007b';
+    obstacles.forEach(obs => {
+        ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+    });
+}
+
+function gameLoop() {
+    update();
+    draw();
+    if (gameRunning) requestAnimationFrame(gameLoop);
+}
+
+/**
+ * CONTROLS & EVENTS
+ */
+function jump() {
+    if (player.grounded && gameRunning) {
+        player.dy = -player.jumpForce;
+        player.grounded = false;
+        playSound(400, 'square', 0.1);
+    }
+}
+
+window.addEventListener('keydown', (e) => {
+    if (e.code === 'Space' || e.code === 'ArrowUp') jump();
+});
+
+canvas.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    jump();
+});
+
+startBtn.addEventListener('click', () => {
+    resetGame();
+    overlay.classList.add('hidden');
+    gameRunning = true;
+    gameLoop();
+    audioCtx.resume();
+});
+
+function resetGame() {
+    score = 0;
+    gameSpeed = 5;
+    obstacles = [];
+    player.y = 300;
+    frameCount = 0;
+    isDarkMode = true;
+    highScoreEl.innerText = `High: ${Math.floor(highScore/10)}`;
+}
+
+function gameOver() {
+    gameRunning = false;
+    playSound(100, 'sawtooth', 0.3);
+    
+    if (score > highScore) {
+        highScore = score;
+        localStorage.setItem('neonHighScore', highScore);
+    }
+
+    overlay.classList.remove('hidden');
+    document.getElementById('title').innerText = "GAME OVER";
+    finalScoreEl.innerText = `Final Score: ${Math.floor(score/10)}`;
+    finalScoreEl.classList.remove('hidden');
+    startBtn.innerText = "Try Again";
+}
+</script>
+</body>
+</html>

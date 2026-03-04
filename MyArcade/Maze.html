@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>MAZE HACKER: PATHFINDER</title>
+    <style>
+        body { 
+            background: #000; color: #fff; font-family: 'Courier New', monospace; 
+            margin: 0; padding: 0; display: flex; flex-direction: column; 
+            align-items: center; justify-content: center; height: 100vh; overflow: hidden;
+        }
+        #ui { 
+            width: 100%; max-width: 600px; display: flex; justify-content: space-between; 
+            padding: 10px; background: rgba(10,10,10,0.9); border-bottom: 2px solid;
+            font-size: 0.8rem; box-sizing: border-box;
+        }
+        #game-container { 
+            position: relative; width: 95vw; height: 80vh; 
+            display: flex; justify-content: center; align-items: center;
+        }
+        canvas { 
+            max-width: 100%; max-height: 100%; border: 2px solid #333; 
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        }
+        #hack-modal { 
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); 
+            background: #000; border: 3px solid #f00; padding: 20px; 
+            display: none; text-align: center; color: #f00; z-index: 10; width: 80%;
+        }
+        input { background: #000; border: 2px solid #f00; color: #f00; font-size: 1.5rem; width: 100px; text-align: center; }
+        .controls-hint { font-size: 0.7rem; color: #666; margin-top: 5px; }
+    </style>
+</head>
+<body>
+
+<div id="ui">
+    <div>LVL: <span id="lvl">1</span></div>
+    <div>KILLS: <span id="kills">0</span></div>
+    <div>AMMO: <span id="ammo">READY</span></div>
+</div>
+
+<div id="game-container">
+    <canvas id="gameCanvas"></canvas>
+    <div id="hack-modal">
+        <h2 style="margin:0">SECURITY OVERRIDE</h2>
+        <h1 id="question">?</h1>
+        <input type="number" id="ans-input" autocomplete="off">
+        <div class="controls-hint">TAP ENTER TO HACK</div>
+    </div>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+let level = 1;
+let tileSize = 20;
+let cols, rows;
+let grid = [];
+let player = { x: 1, y: 1, lastDir: {x: 1, y: 0} };
+let drones = [];
+let bullets = [];
+let isHacking = false;
+let killCount = 0;
+let ammoReady = true;
+let currentHue = 120;
+
+function initLevel() {
+    currentHue = (120 + (level * 70)) % 360;
+    cols = 21 + (level * 2);
+    rows = 17 + (level * 2);
+    
+    // Portability Logic: Fit canvas to screen
+    const screenW = window.innerWidth * 0.95;
+    const screenH = window.innerHeight * 0.75;
+    tileSize = Math.floor(Math.min(screenW / cols, screenH / rows));
+    
+    canvas.width = cols * tileSize;
+    canvas.height = rows * tileSize;
+    
+    generateMaze();
+    player.x = 1; player.y = 1;
+    bullets = [];
+    drones = [];
+    
+    for(let i=0; i < 2 + level; i++) { spawnDrone(); }
+    
+    document.getElementById('lvl').innerText = level;
+    document.getElementById('ui').style.borderColor = `hsl(${currentHue}, 100%, 50%)`;
+    document.getElementById('ui').style.color = `hsl(${currentHue}, 100%, 50%)`;
+}
+
+function generateMaze() {
+    grid = Array(rows).fill().map(() => Array(cols).fill(1));
+    function walk(x, y) {
+        grid[y][x] = 0;
+        const dirs = [[0,2], [0,-2], [2,0], [-2,0]].sort(() => Math.random() - 0.5);
+        for (let [dx, dy] of dirs) {
+            let nx = x + dx, ny = y + dy;
+            if (nx > 0 && nx < cols-1 && ny > 0 && ny < rows-1 && grid[ny][nx] === 1) {
+                grid[y + dy/2][x + dx/2] = 0;
+                walk(nx, ny);
+            }
+        }
+    }
+    walk(1, 1);
+    for(let i=0; i < 6 + level; i++) {
+        let rx = Math.floor(Math.random()*cols), ry = Math.floor(Math.random()*rows);
+        if(grid[ry][rx] === 0 && (rx > 3 || ry > 3)) grid[ry][rx] = 2;
+    }
+    grid[rows-2][cols-2] = 3;
+}
+
+function spawnDrone() {
+    drones.push({ x: cols-2, y: rows-2 });
+}
+
+function fireBullet() {
+    if(!ammoReady || isHacking) return;
+    bullets.push({ x: player.x, y: player.y, dx: player.lastDir.x, dy: player.lastDir.y });
+    ammoReady = false;
+    document.getElementById('ammo').innerText = "---";
+    setTimeout(() => {
+        ammoReady = true;
+        document.getElementById('ammo').innerText = "READY";
+    }, 1000);
+}
+
+// Logic for Villains to walk only on paths
+function moveDrones() {
+    drones.forEach(d => {
+        let possibleMoves = [
+            {x: d.x+1, y: d.y}, {x: d.x-1, y: d.y},
+            {x: d.x, y: d.y+1}, {x: d.x, y: d.y-1}
+        ].filter(m => grid[m.y] && (grid[m.y][m.x] === 0 || grid[m.y][m.x] === 3));
+
+        if (possibleMoves.length > 0) {
+            // Sort moves by distance to player
+            possibleMoves.sort((a, b) => {
+                let distA = Math.abs(a.x - player.x) + Math.abs(a.y - player.y);
+                let distB = Math.abs(b.x - player.x) + Math.abs(b.y - player.y);
+                return distA - distB;
+            });
+            
+            // Drones get smarter as levels increase
+            let move = Math.random() < 0.8 ? possibleMoves[0] : possibleMoves[Math.floor(Math.random()*possibleMoves.length)];
+            d.x = move.x;
+            d.y = move.y;
+        }
+
+        if(d.x === player.x && d.y === player.y) {
+            alert("CAPTURED! RETRYING...");
+            initLevel();
+        }
+    });
+}
+
+function updateBullets() {
+    for(let i = bullets.length - 1; i >= 0; i--) {
+        let b = bullets[i];
+        let nextX = b.x + b.dx * 0.4;
+        let nextY = b.y + b.dy * 0.4;
+
+        if(grid[Math.round(nextY)][Math.round(nextX)] === 1) {
+            bullets.splice(i, 1);
+            continue;
+        }
+        b.x = nextX; b.y = nextY;
+
+        drones.forEach((d, dIdx) => {
+            if(Math.hypot(d.x - b.x, d.y - b.y) < 0.5) {
+                drones.splice(dIdx, 1);
+                bullets.splice(i, 1);
+                killCount++;
+                document.getElementById('kills').innerText = killCount;
+                setTimeout(spawnDrone, 4000);
+            }
+        });
+    }
+}
+
+function startHack(x, y) {
+    isHacking = true;
+    document.getElementById('hack-modal').style.display = 'block';
+    let a = Math.floor(Math.random() * (10 * level)), b = Math.floor(Math.random() * 5);
+    let target = a + b;
+    document.getElementById('question').innerText = `${a} + ${b} = ?`;
+    const input = document.getElementById('ans-input');
+    input.value = ''; input.focus();
+    input.onkeydown = (e) => {
+        if(e.key === 'Enter') {
+            if(parseInt(input.value) === target) {
+                grid[y][x] = 0; isHacking = false;
+                document.getElementById('hack-modal').style.display = 'none';
+            } else { input.value = ''; }
+        }
+    };
+}
+
+window.onkeydown = (e) => {
+    if(isHacking) return;
+    let nx = player.x, ny = player.y;
+    if(e.key === 'w' || e.key === 'ArrowUp') { ny--; player.lastDir = {x:0, y:-1}; }
+    if(e.key === 's' || e.key === 'ArrowDown') { ny++; player.lastDir = {x:0, y:1}; }
+    if(e.key === 'a' || e.key === 'ArrowLeft') { nx--; player.lastDir = {x:-1, y:0}; }
+    if(e.key === 'd' || e.key === 'ArrowRight') { nx++; player.lastDir = {x:1, y:0}; }
+    if(e.code === 'Space') fireBullet();
+
+    if(grid[ny] && grid[ny][nx] === 0) { player.x = nx; player.y = ny; }
+    else if(grid[ny] && grid[ny][nx] === 2) startHack(nx, ny);
+    else if(grid[ny] && grid[ny][nx] === 3) { level++; initLevel(); }
+};
+
+// Movement timing for drones
+setInterval(() => { if(!isHacking) moveDrones(); }, 400 - (level * 10));
+
+function draw() {
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    for(let r=0; r<rows; r++) {
+        for(let c=0; c<cols; c++) {
+            if(grid[r][c] === 1) {
+                ctx.fillStyle = `hsl(${currentHue}, 80%, 15%)`;
+                ctx.fillRect(c*tileSize, r*tileSize, tileSize, tileSize);
+            } else if(grid[r][c] === 2) {
+                ctx.fillStyle = '#f00';
+                ctx.fillRect(c*tileSize+2, r*tileSize+2, tileSize-4, tileSize-4);
+            } else if(grid[r][c] === 3) {
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(c*tileSize, r*tileSize, tileSize, tileSize);
+            }
+        }
+    }
+
+    updateBullets();
+    ctx.fillStyle = '#fff';
+    bullets.forEach(b => ctx.fillRect(b.x*tileSize+tileSize/3, b.y*tileSize+tileSize/3, tileSize/3, tileSize/3));
+
+    ctx.fillStyle = `hsl(${currentHue}, 100%, 50%)`;
+    ctx.fillRect(player.x*tileSize+2, player.y*tileSize+2, tileSize-4, tileSize-4);
+
+    ctx.fillStyle = '#f00';
+    drones.forEach(d => {
+        ctx.beginPath();
+        ctx.arc(d.x*tileSize+tileSize/2, d.y*tileSize+tileSize/2, tileSize/3, 0, Math.PI*2);
+        ctx.fill();
+    });
+
+    requestAnimationFrame(draw);
+}
+
+window.onresize = initLevel;
+initLevel();
+draw();
+</script>
+</body>
+</html>

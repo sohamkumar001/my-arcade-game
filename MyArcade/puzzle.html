@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Elite 15 Puzzle</title>
+    <style>
+        :root {
+            --bg: #f4f7f6;
+            --tile-bg: #ffffff;
+            --tile-text: #2c3e50;
+            --accent: #3498db;
+            --empty: #dfe6e9;
+            --success: #2ecc71;
+            --shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        body {
+            background-color: var(--bg);
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+
+        .header { text-align: center; margin-bottom: 20px; }
+
+        .stats-bar {
+            display: flex;
+            gap: 30px;
+            margin-bottom: 20px;
+            font-weight: 600;
+            font-size: 1.2rem;
+            color: var(--tile-text);
+        }
+
+        /* GRID SYSTEM */
+        #puzzle-container {
+            width: 400px;
+            height: 400px;
+            background: #bdc3c7;
+            border-radius: 8px;
+            position: relative;
+            padding: 10px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+        }
+
+        .tile {
+            position: absolute;
+            width: 90px;
+            height: 90px;
+            background: var(--tile-bg);
+            color: var(--tile-text);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.8rem;
+            font-weight: bold;
+            border-radius: 6px;
+            cursor: pointer;
+            user-select: none;
+            box-shadow: var(--shadow);
+            transition: transform 0.2s cubic-bezier(0.25, 1, 0.5, 1), 
+                        background 0.3s, 
+                        box-shadow 0.2s;
+        }
+
+        .tile:hover {
+            background: #f8f9fa;
+            box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+        }
+
+        .tile.correct {
+            color: var(--success);
+            border: 2px solid rgba(46, 204, 113, 0.3);
+        }
+
+        .controls {
+            margin-top: 30px;
+            display: flex;
+            gap: 15px;
+        }
+
+        button {
+            padding: 10px 25px;
+            border: none;
+            border-radius: 5px;
+            background: var(--accent);
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+
+        button:hover { background: #2980b9; transform: translateY(-2px); }
+
+        #win-message {
+            margin-top: 15px;
+            color: var(--success);
+            font-weight: bold;
+            height: 24px;
+        }
+
+        @media (max-width: 450px) {
+            #puzzle-container { width: 320px; height: 320px; }
+            .tile { width: 70px; height: 70px; font-size: 1.4rem; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>15 PUZZLE</h1>
+    </div>
+
+    <div class="stats-bar">
+        <div>Moves: <span id="move-count">0</span></div>
+        <div>Time: <span id="timer">00:00</span></div>
+    </div>
+
+    <div id="puzzle-container"></div>
+
+    <div id="win-message"></div>
+
+    <div class="controls">
+        <button onclick="initGame()">Restart Game</button>
+    </div>
+
+    <script>
+        const container = document.getElementById('puzzle-container');
+        const moveDisplay = document.getElementById('move-count');
+        const timerDisplay = document.getElementById('timer');
+        const winDisplay = document.getElementById('win-message');
+
+        let tiles = []; // Array to track tile objects
+        let emptyPos = 15; // Index of the empty slot (0-15)
+        let moves = 0;
+        let timer = 0;
+        let timerInterval = null;
+        let gameActive = false;
+
+        /**
+         * INITIALIZATION
+         */
+        function initGame() {
+            container.innerHTML = '';
+            tiles = [];
+            moves = 0;
+            timer = 0;
+            gameActive = true;
+            moveDisplay.innerText = moves;
+            winDisplay.innerText = '';
+            
+            clearInterval(timerInterval);
+            startTimer();
+
+            // Create numbers 1-15
+            let numbers = [...Array(15).keys()].map(i => i + 1);
+            
+            // Shuffle and ensure solvability
+            shuffle(numbers);
+            if (!isSolvable(numbers)) {
+                // Swap the first two elements to flip polarity
+                [numbers[0], numbers[1]] = [numbers[1], numbers[0]];
+            }
+
+            // Render Tiles
+            numbers.forEach((num, index) => {
+                const tile = document.createElement('div');
+                tile.classList.add('tile');
+                tile.innerText = num;
+                tile.dataset.value = num;
+                
+                // Track tile position
+                const tileObj = { el: tile, currentPos: index, val: num };
+                tiles.push(tileObj);
+                
+                tile.onclick = () => moveTile(tileObj);
+                container.appendChild(tile);
+                updateTilePosition(tileObj);
+            });
+
+            emptyPos = 15; // Last slot is empty
+            checkCorrectness();
+        }
+
+        /**
+         * CORE LOGIC
+         */
+        function moveTile(tileObj) {
+            if (!gameActive) return;
+
+            const current = tileObj.currentPos;
+            const row = Math.floor(current / 4);
+            const col = current % 4;
+            const emptyRow = Math.floor(emptyPos / 4);
+            const emptyCol = emptyPos % 4;
+
+            // Check if adjacent to empty space
+            const isAdjacent = (Math.abs(row - emptyRow) + Math.abs(col - emptyCol)) === 1;
+
+            if (isAdjacent) {
+                // Swap positions
+                const temp = tileObj.currentPos;
+                tileObj.currentPos = emptyPos;
+                emptyPos = temp;
+
+                moves++;
+                moveDisplay.innerText = moves;
+                
+                updateTilePosition(tileObj);
+                checkCorrectness();
+                checkWin();
+            }
+        }
+
+        function updateTilePosition(tileObj) {
+            const row = Math.floor(tileObj.currentPos / 4);
+            const col = tileObj.currentPos % 4;
+            
+            // Calculate absolute position
+            // 90px tile + 10px margin = 100px increments
+            const x = col * 100;
+            const y = row * 100;
+            
+            tileObj.el.style.transform = `translate(${x}px, ${y}px)`;
+        }
+
+        /**
+         * UTILITIES
+         */
+        function shuffle(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+        }
+
+        // 15-Puzzle Solvability Math:
+        // If grid width is even, puzzle is solvable if:
+        // (Inversions is odd AND empty row is even) OR (Inversions is even AND empty row is odd)
+        function isSolvable(numbers) {
+            let inversions = 0;
+            for (let i = 0; i < numbers.length; i++) {
+                for (let j = i + 1; j < numbers.length; j++) {
+                    if (numbers[i] > numbers[j]) inversions++;
+                }
+            }
+            // Since our empty space is always at the bottom (row 3, index 15) when starting,
+            // the row index is odd. Therefore, inversions must be even.
+            return inversions % 2 === 0;
+        }
+
+        function checkCorrectness() {
+            tiles.forEach(tile => {
+                if (tile.val === tile.currentPos + 1) {
+                    tile.el.classList.add('correct');
+                } else {
+                    tile.el.classList.remove('correct');
+                }
+            });
+        }
+
+        function checkWin() {
+            const isWin = tiles.every(tile => tile.val === tile.currentPos + 1);
+            if (isWin) {
+                gameActive = false;
+                clearInterval(timerInterval);
+                winDisplay.innerText = "🏆 Puzzle Solved!";
+                tiles.forEach(t => t.el.style.background = "var(--success)");
+                tiles.forEach(t => t.el.style.color = "white");
+            }
+        }
+
+        function startTimer() {
+            timerInterval = setInterval(() => {
+                timer++;
+                const mins = Math.floor(timer / 60).toString().padStart(2, '0');
+                const secs = (timer % 60).toString().padStart(2, '0');
+                timerDisplay.innerText = `${mins}:${secs}`;
+            }, 1000);
+        }
+
+        // Launch game on load
+        initGame();
+    </script>
+</body>
+</html>

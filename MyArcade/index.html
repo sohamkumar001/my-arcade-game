@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Arcade Central | Play Online</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body>
+
+    <nav class="navbar">
+        <div class="logo">ARCADE<span>HUB</span></div>
+        <ul class="nav-links">
+            <li><a href="#" onclick="showSection('home')"><i class="fas fa-home"></i> Home</a></li>
+            <li><a href="#" onclick="showSection('games')"><i class="fas fa-gamepad"></i> Games</a></li>
+            <li><a href="#" onclick="showSection('favorites')"><i class="fas fa-heart"></i> Favorites</a></li>
+        </ul>
+    </nav>
+
+    <section id="home" class="content-section">
+        <div class="hero">
+            <h1>Welcome to the Ultimate Arcade</h1>
+            <p>20 Classic Games. One Place. No Downloads.</p>
+            <button class="cta-btn" onclick="showSection('games')">Start Playing</button>
+        </div>
+    </section>
+
+    <section id="games" class="content-section" style="display:none;">
+        <h2 class="section-title">All Games</h2>
+        
+<div class="search-box">
+    <div class="search-inner">
+        <i class="fas fa-search search-icon"></i>
+        <input type="text" id="gameSearch" placeholder="SEARCH DATABASE..." onkeyup="filterGames()">
+        <div class="search-underline"></div>
+    </div>
+</div>
+        <div class="game-grid" id="gameGrid">
+            </div>
+    </section>
+
+    <section id="favorites" class="content-section" style="display:none;">
+        <h2 class="section-title">Your Favorites</h2>
+        <div class="game-grid" id="favoriteGrid">
+            <p class="empty-msg">No favorites added yet!</p>
+        </div>
+    </section>
+
+    <div id="gameModal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn" onclick="closeGame()">&times;</span>
+            <iframe id="gameFrame" src="" frameborder="0"></iframe>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

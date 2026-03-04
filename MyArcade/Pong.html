@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Arcade Pong | Retro Edition</title>
+    <style>
+        :root {
+            --retro-white: #eeeeee;
+            --retro-bg: #000000;
+        }
+
+        body {
+            margin: 0;
+            background-color: #111;
+            color: var(--retro-white);
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .ui-container {
+            text-align: center;
+            margin-bottom: 10px;
+        }
+
+        canvas {
+            background-color: var(--retro-bg);
+            border: 4px solid var(--retro-white);
+            box-shadow: 0 0 20px rgba(255, 255, 255, 0.2);
+        }
+
+        .controls {
+            margin-top: 20px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        select, button {
+            background: black;
+            color: white;
+            border: 2px solid white;
+            padding: 8px 15px;
+            font-family: 'Courier New', Courier, monospace;
+            cursor: pointer;
+            text-transform: uppercase;
+        }
+
+        button:hover {
+            background: white;
+            color: black;
+        }
+
+        .instructions {
+            margin-top: 15px;
+            font-size: 0.8rem;
+            opacity: 0.7;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="ui-container">
+        <h1 style="letter-spacing: 10px;">PONG</h1>
+        <div id="status">PRESS START</div>
+    </div>
+
+    <canvas id="pongCanvas" width="800" height="400"></canvas>
+
+    <div class="controls">
+        <button id="startBtn">Start Game</button>
+        <div>
+            AI: 
+            <select id="difficulty">
+                <option value="0">OFF (2-PLAYER)</option>
+                <option value="0.05">EASY</option>
+                <option value="0.12" selected>MEDIUM</option>
+                <option value="0.25">HARD</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="instructions">
+        P1: W/S Keys | P2: Arrow Keys
+    </div>
+
+<script>
+/** * AUDIO ENGINE
+ * Generates retro beeps using Web Audio API
+ */
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+function playBeep(freq, duration) {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + duration);
+}
+
+/**
+ * GAME CORE
+ */
+const canvas = document.getElementById('pongCanvas');
+const ctx = canvas.getContext('2d');
+const startBtn = document.getElementById('startBtn');
+const diffSelect = document.getElementById('difficulty');
+const statusText = document.getElementById('status');
+
+// Configuration
+const PADDLE_WIDTH = 10;
+const PADDLE_HEIGHT = 80;
+const BALL_SIZE = 10;
+const WINNING_SCORE = 10;
+
+let gameRunning = false;
+let p1Score = 0;
+let p2Score = 0;
+
+// Game Objects
+const p1 = { x: 0, y: canvas.height/2 - 40, score: 0 };
+const p2 = { x: canvas.width - PADDLE_WIDTH, y: canvas.height/2 - 40, score: 0 };
+const ball = { x: 400, y: 200, dx: 5, dy: 5, speed: 5 };
+
+// Input State
+const keys = {};
+
+window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+/**
+ * LOGIC FUNCTIONS
+ */
+function resetBall(winner) {
+    ball.x = canvas.width / 2;
+    ball.y = canvas.height / 2;
+    ball.speed = 5;
+    ball.dx = (winner === 1) ? -5 : 5;
+    ball.dy = (Math.random() > 0.5 ? 5 : -5);
+    playBeep(200, 0.3);
+}
+
+function update() {
+    if (!gameRunning) return;
+
+    // Paddle Movement (Player 1)
+    if (keys['w'] && p1.y > 0) p1.y -= 7;
+    if (keys['s'] && p1.y < canvas.height - PADDLE_HEIGHT) p1.y += 7;
+
+    // Paddle Movement (Player 2 / AI)
+    const aiDifficulty = parseFloat(diffSelect.value);
+    if (aiDifficulty > 0) {
+        // AI Logic: Move towards ball Y position with a delay/lag factor
+        let targetY = ball.y - PADDLE_HEIGHT / 2;
+        p2.y += (targetY - p2.y) * aiDifficulty;
+    } else {
+        // 2-Player Manual Controls
+        if (keys['arrowup'] && p2.y > 0) p2.y -= 7;
+        if (keys['arrowdown'] && p2.y < canvas.height - PADDLE_HEIGHT) p2.y += 7;
+    }
+
+    // Ball Movement
+    ball.x += ball.dx;
+    ball.y += ball.dy;
+
+    // Wall Bounce (Top/Bottom)
+    if (ball.y <= 0 || ball.y >= canvas.height - BALL_SIZE) {
+        ball.dy *= -1;
+        playBeep(400, 0.1);
+    }
+
+    // Paddle Collision Detection
+    let paddle = (ball.x < canvas.width / 2) ? p1 : p2;
+
+    if (checkCollision(ball, paddle)) {
+        // Reverse direction
+        ball.dx *= -1;
+        // Increase speed slightly
+        ball.speed += 0.2;
+        // Change angle based on where it hit the paddle
+        let deltaY = ball.y - (paddle.y + PADDLE_HEIGHT / 2);
+        ball.dy = deltaY * 0.2;
+        
+        playBeep(600, 0.1);
+    }
+
+    // Scoring
+    if (ball.x < 0) {
+        p2Score++;
+        checkWin(2);
+    } else if (ball.x > canvas.width) {
+        p1Score++;
+        checkWin(1);
+    }
+}
+
+function checkCollision(b, p) {
+    return b.x < p.x + PADDLE_WIDTH &&
+           b.x + BALL_SIZE > p.x &&
+           b.y < p.y + PADDLE_HEIGHT &&
+           b.y + BALL_SIZE > p.y;
+}
+
+function checkWin(winner) {
+    if (p1Score >= WINNING_SCORE || p2Score >= WINNING_SCORE) {
+        gameRunning = false;
+        statusText.innerText = `PLAYER ${winner} WINS!`;
+        startBtn.innerText = "RESTART";
+    } else {
+        resetBall(winner);
+    }
+}
+
+/**
+ * RENDERING
+ */
+function draw() {
+    // Clear Canvas
+    ctx.fillStyle = 'black';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Center Line
+    ctx.setLineDash([10, 10]);
+    ctx.strokeStyle = 'white';
+    ctx.beginPath();
+    ctx.moveTo(canvas.width / 2, 0);
+    ctx.lineTo(canvas.width / 2, canvas.height);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Scores
+    ctx.font = '50px "Courier New"';
+    ctx.fillStyle = 'white';
+    ctx.fillText(p1Score, canvas.width / 4, 60);
+    ctx.fillText(p2Score, (canvas.width / 4) * 3, 60);
+
+    // Paddles
+    ctx.fillRect(p1.x, p1.y, PADDLE_WIDTH, PADDLE_HEIGHT);
+    ctx.fillRect(p2.x, p2.y, PADDLE_WIDTH, PADDLE_HEIGHT);
+
+    // Ball
+    ctx.fillRect(ball.x, ball.y, BALL_SIZE, BALL_SIZE);
+}
+
+function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+}
+
+/**
+ * EVENTS
+ */
+startBtn.addEventListener('click', () => {
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    p1Score = 0;
+    p2Score = 0;
+    p1.y = canvas.height/2 - 40;
+    p2.y = canvas.height/2 - 40;
+    statusText.innerText = "MATCH IN PROGRESS";
+    resetBall(1);
+    gameRunning = true;
+});
+
+// Start the loop
+loop();
+
+</script>
+</body>
+</html>

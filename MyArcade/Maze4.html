@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Cyber-Hunter: Tactical Breach</title>
+
+<style>
+:root {
+    --neon: #00ff99;
+    --bg: #050505;
+
+    --wall: #021b12;
+    --path: #00110a;
+    --door: #ff3b3b;
+    --exit: #ffffff;
+    --player: #00ff99;
+    --drone: #ff0000;
+}
+
+body {
+    background: var(--bg);
+    color: var(--neon);
+    font-family: 'Courier New', monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin: 0;
+    overflow: hidden;
+}
+
+/* HUD */
+#hud {
+    width: 95%;
+    max-width: 900px;
+    margin-top: 10px;
+    padding: 15px;
+    border: 2px solid var(--neon);
+    display: flex;
+    justify-content: space-around;
+    flex-wrap: wrap;
+    gap: 10px;
+    background: rgba(0,20,0,0.8);
+    box-shadow: 0 0 15px var(--neon);
+    border-radius: 5px;
+}
+
+.stat {
+    font-weight: bold;
+    font-size: 1.1rem;
+}
+
+/* GAME AREA */
+#game-area {
+    position: relative;
+    margin-top: 10px;
+}
+
+canvas {
+    display: block;
+    background: #000;
+    border: 2px solid #222;
+}
+
+/* HACK UI */
+#hack-ui {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: #000;
+    border: 4px solid var(--neon);
+    padding: 20px;
+    display: none;
+    text-align: center;
+    z-index: 100;
+    box-shadow: 0 0 50px #000;
+    width: 90%;
+    max-width: 400px;
+}
+
+input {
+    background: #000;
+    border: 1px solid var(--neon);
+    color: #fff;
+    font-size: 2rem;
+    width: 80%;
+    text-align: center;
+    outline: none;
+    margin-top: 20px;
+}
+
+.key-hint {
+    font-size: 0.8rem;
+    color: #666;
+    margin-top: 10px;
+}
+</style>
+</head>
+
+<body>
+
+<div id="hud">
+    <div class="stat">SEC-LEVEL: <span id="lvl">1</span></div>
+    <div class="stat">DECOYS: <span id="decoys">3</span></div>
+    <div class="stat">FRAGS: <span id="frags">0</span></div>
+    <div class="stat" style="color:red">THREAT: HIGH</div>
+</div>
+
+<div id="game-area">
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="hack-ui">
+        <div style="font-size:0.7rem;color:#888;">BYPASSING ENCRYPTION...</div>
+        <h2 id="q-text">ERROR</h2>
+        <input type="text" id="ans-input" autocomplete="off">
+        <div class="key-hint">ENTER DECRYPTED KEY</div>
+    </div>
+</div>
+
+<div class="key-hint" style="color:#0f0">
+WASD / ARROWS: MOVE | SHIFT: DECOY | SPACE: FIRE | REACH WHITE BLOCK TO ESCAPE
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+let level = 1, frags = 0;
+let tileSize = 30, cols, rows, grid = [];
+
+let player = { x:1, y:1, decoys:3 };
+let lastDir = {x:1,y:0};
+
+let drones = [], bullets = [], decoys = [];
+let isHacking = false, targetAns="";
+
+const gkPool = [
+    {q:"Planet closest to Sun?",a:"mercury"},
+    {q:"Gas we breathe to live?",a:"oxygen"},
+    {q:"Color of Emeralds?",a:"green"},
+    {q:"What is H2O?",a:"water"},
+    {q:"Opposite of Cold?",a:"hot"},
+    {q:"Fastest land animal?",a:"cheetah"},
+    {q:"Capital of France?",a:"paris"}
+];
+
+/* ---------- MAZE ---------- */
+function createPerfectMaze(){
+    grid = Array(rows).fill().map(()=>Array(cols).fill(1));
+    const stack=[[1,1]];
+    grid[1][1]=0;
+
+    while(stack.length){
+        let [x,y]=stack[stack.length-1];
+        let n=[[0,2],[0,-2],[2,0],[-2,0]]
+        .map(([dx,dy])=>[x+dx,y+dy])
+        .filter(([nx,ny])=>nx>0 && ny>0 && nx<cols-1 && ny<rows-1 && grid[ny][nx]==1);
+
+        if(n.length){
+            let [nx,ny]=n[Math.floor(Math.random()*n.length)];
+            grid[ny][nx]=0;
+            grid[y+(ny-y)/2][x+(nx-x)/2]=0;
+            stack.push([nx,ny]);
+        } else stack.pop();
+    }
+
+    let doorCount = 2 + level*2;
+    for(let i=0;i<doorCount;i++){
+        let rx=Math.floor(Math.random()*cols);
+        let ry=Math.floor(Math.random()*rows);
+        if(grid[ry][rx]==0 && (rx>3 || ry>3)) grid[ry][rx]=2;
+    }
+
+    grid[rows-2][cols-2]=3;
+}
+
+/* ---------- INIT ---------- */
+function initLevel(){
+    cols = 17 + level*2;
+    rows = 13 + level*2;
+
+    const maxW = window.innerWidth*0.95;
+    const maxH = window.innerHeight*0.65;
+
+    tileSize = Math.floor(Math.min(maxW/cols, maxH/rows));
+
+    canvas.width = cols*tileSize;
+    canvas.height = rows*tileSize;
+
+    createPerfectMaze();
+
+    player.x=1; player.y=1; player.decoys=3;
+
+    drones=[];
+    for(let i=0;i<Math.min(3+level,8);i++)
+        drones.push({x:cols-2,y:rows-2});
+
+    bullets=[];
+
+    document.getElementById("lvl").innerText=level;
+    document.getElementById("decoys").innerText=player.decoys;
+}
+
+/* ---------- HACK ---------- */
+function startHack(x,y){
+    isHacking=true;
+    const ui=document.getElementById("hack-ui");
+    const q=document.getElementById("q-text");
+    const input=document.getElementById("ans-input");
+
+    ui.style.display="block";
+
+    let type=Math.floor(Math.random()*5);
+    let v1=5+level*2, v2=3+level;
+
+    switch(type){
+        case 0: targetAns=(v1+v2).toString(); q.innerText=`${v1}+${v2}`; break;
+        case 1: targetAns=(v1*v2).toString(); q.innerText=`${v1}×${v2}`; break;
+        case 2: targetAns=(v1).toString(); q.innerText=`${v1*v2}÷${v2}`; break;
+        case 3: targetAns=(v1+10-v2).toString(); q.innerText=`${v1+10}-${v2}`; break;
+        case 4:
+            let e=gkPool[Math.floor(Math.random()*gkPool.length)];
+            targetAns=e.a; q.innerText=e.q; break;
+    }
+
+    input.value="";
+    input.focus();
+
+    input.onkeydown=(e)=>{
+        if(e.key==="Enter"){
+            if(input.value.toLowerCase().trim()==targetAns){
+                grid[y][x]=0;
+                isHacking=false;
+                ui.style.display="none";
+            } else {
+                input.style.borderColor="red";
+                setTimeout(()=>input.style.borderColor="var(--neon)",500);
+            }
+        }
+    };
+}
+
+/* ---------- CONTROLS ---------- */
+window.onkeydown=(e)=>{
+    if(isHacking) return;
+
+    let nx=player.x, ny=player.y;
+
+    if(e.key=="w"||e.key=="ArrowUp"){ny--; lastDir={x:0,y:-1};}
+    if(e.key=="s"||e.key=="ArrowDown"){ny++; lastDir={x:0,y:1};}
+    if(e.key=="a"||e.key=="ArrowLeft"){nx--; lastDir={x:-1,y:0};}
+    if(e.key=="d"||e.key=="ArrowRight"){nx++; lastDir={x:1,y:0};}
+
+    if(e.shiftKey && player.decoys>0){
+        decoys.push({x:player.x,y:player.y,timer:100});
+        player.decoys--;
+        document.getElementById("decoys").innerText=player.decoys;
+    }
+
+    if(e.key==" "){
+        bullets.push({x:player.x+0.5,y:player.y+0.5,vx:lastDir.x*0.4,vy:lastDir.y*0.4});
+    }
+
+    if(grid[ny] && grid[ny][nx]==0){player.x=nx;player.y=ny;}
+    else if(grid[ny] && grid[ny][nx]==2){startHack(nx,ny);}
+    else if(grid[ny] && grid[ny][nx]==3){level++; initLevel();}
+};
+
+/* ---------- AI ---------- */
+function moveDrones(){
+    if(isHacking) return;
+
+    drones.forEach(d=>{
+        let t = decoys.length?decoys[0]:player;
+
+        let options=[[0,1],[0,-1],[1,0],[-1,0]]
+        .map(([dx,dy])=>({x:d.x+dx,y:d.y+dy,dist:Math.hypot(t.x-(d.x+dx),t.y-(d.y+dy))}))
+        .filter(o=>grid[o.y][o.x]==0||grid[o.y][o.x]==2)
+        .sort((a,b)=>a.dist-b.dist);
+
+        if(options.length){ d.x=options[0].x; d.y=options[0].y; }
+
+        if(d.x==player.x && d.y==player.y){
+            alert("SYSTEM OVERRUN - TERMINATED");
+            level=1; frags=0;
+            document.getElementById("frags").innerText=0;
+            initLevel();
+        }
+    });
+}
+setInterval(moveDrones,400);
+
+/* ---------- UPDATE ---------- */
+function update(){
+    decoys=decoys.filter(d=>--d.timer>0);
+
+    for(let i=bullets.length-1;i>=0;i--){
+        let b=bullets[i];
+        b.x+=b.vx; b.y+=b.vy;
+
+        let gx=Math.floor(b.x), gy=Math.floor(b.y);
+        if(!grid[gy]||grid[gy][gx]==1){bullets.splice(i,1); continue;}
+
+        drones.forEach((d,di)=>{
+            if(Math.hypot(d.x+0.5-b.x,d.y+0.5-b.y)<0.7){
+                drones.splice(di,1);
+                bullets.splice(i,1);
+                frags++;
+                document.getElementById("frags").innerText=frags;
+                setTimeout(()=>drones.push({x:cols-2,y:rows-2}),3000);
+            }
+        });
+    }
+}
+
+/* ---------- RENDER ---------- */
+function render(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    for(let r=0;r<rows;r++){
+        for(let c=0;c<cols;c++){
+
+            if(grid[r][c]==1){
+                ctx.fillStyle="#021b12";
+                ctx.fillRect(c*tileSize,r*tileSize,tileSize,tileSize);
+
+                ctx.strokeStyle="#063d28";
+                ctx.strokeRect(c*tileSize,r*tileSize,tileSize,tileSize);
+
+            } else if(grid[r][c]==0){
+                ctx.fillStyle="#00110a";
+                ctx.fillRect(c*tileSize,r*tileSize,tileSize,tileSize);
+
+            } else if(grid[r][c]==2){
+                ctx.fillStyle="#ff3b3b";
+                ctx.fillRect(c*tileSize+tileSize*0.2,r*tileSize+tileSize*0.2,tileSize*0.6,tileSize*0.6);
+
+            } else if(grid[r][c]==3){
+                ctx.fillStyle="#ffffff";
+                ctx.fillRect(c*tileSize,r*tileSize,tileSize,tileSize);
+            }
+        }
+    }
+
+    ctx.fillStyle="#44f";
+    decoys.forEach(d=>ctx.fillRect(d.x*tileSize+6,d.y*tileSize+6,tileSize-12,tileSize-12));
+
+    ctx.fillStyle="#00ff99";
+    ctx.shadowBlur=15;
+    ctx.fillRect(player.x*tileSize+4,player.y*tileSize+4,tileSize-8,tileSize-8);
+
+    ctx.fillStyle="#ff0000";
+    drones.forEach(d=>{
+        ctx.beginPath();
+        ctx.arc(d.x*tileSize+tileSize/2,d.y*tileSize+tileSize/2,tileSize/3,0,Math.PI*2);
+        ctx.fill();
+    });
+
+    ctx.shadowBlur=0;
+
+    update();
+    requestAnimationFrame(render);
+}
+
+/* START */
+initLevel();
+render();
+</script>
+
+</body>
+</html>

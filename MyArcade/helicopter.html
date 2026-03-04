@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RESCUE ONE // Helicopter Sim</title>
+    <style>
+        body {
+            margin: 0;
+            background: #111;
+            color: #eee;
+            font-family: 'Courier New', Courier, monospace;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        #ui {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border: 1px solid #0f0;
+            pointer-events: none;
+        }
+        .fuel-bar {
+            width: 200px;
+            height: 10px;
+            background: #333;
+            border: 1px solid #555;
+        }
+        #fuel-level {
+            width: 100%;
+            height: 100%;
+            background: #0f0;
+            transition: width 0.1s;
+        }
+        canvas {
+            display: block;
+            background: linear-gradient(to bottom, #1a2a6c, #b21f1f, #fdbb2d);
+        }
+        #msg {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 2rem;
+            text-align: center;
+            display: none;
+            background: rgba(0,0,0,0.8);
+            padding: 20px;
+            border: 2px solid white;
+        }
+    </style>
+</head>
+<body>
+
+<div id="ui">
+    <div>ALTITUDE: <span id="alt">0</span>m</div>
+    <div>RESCUED: <span id="res">0</span> / 3</div>
+    <div>SCORE: <span id="score">0</span></div>
+    <div style="margin-top:5px">FUEL:</div>
+    <div class="fuel-bar"><div id="fuel-level"></div></div>
+</div>
+
+<div id="msg">MISSION FAILED<br><small>Press R to Restart</small></div>
+
+<canvas id="gameCanvas"></canvas>
+
+<script>
+/**
+ * ENGINE CONFIG
+ */
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const msg = document.getElementById('msg');
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+const GRAVITY = 0.05;
+const FRICTION = 0.98;
+const THRUST = 0.15;
+const ROTATION_SPEED = 0.05;
+
+let gameActive = true;
+let score = 0;
+let rescuedCount = 0;
+let passengers = 0;
+
+// Camera object for smoothing
+const camera = { x: 0, y: 0 };
+
+// Input State
+const keys = {};
+window.addEventListener('keydown', e => {
+    keys[e.code] = true;
+    if(e.code === 'KeyR' && !gameActive) resetGame();
+});
+window.addEventListener('keyup', e => keys[e.code] = false);
+
+/**
+ * HELICOPTER OBJECT
+ */
+const heli = {
+    x: 100, y: 300,
+    vx: 0, vy: 0,
+    angle: 0,
+    rotorAngle: 0,
+    fuel: 100,
+    w: 40, h: 20,
+    
+    update() {
+        if (!gameActive) return;
+
+        // Physics
+        if (keys['KeyW'] || keys['ArrowUp']) {
+            if (this.fuel > 0) {
+                this.vx += Math.sin(this.angle) * THRUST;
+                this.vy -= Math.cos(this.angle) * THRUST;
+                this.fuel -= 0.1;
+                spawnParticles(this.x, this.y + 10, '#ffffff33', 1); // Downwash
+            }
+        }
+        
+        if (keys['KeyA'] || keys['ArrowLeft']) this.angle -= ROTATION_SPEED;
+        if (keys['KeyD'] || keys['ArrowRight']) this.angle += ROTATION_SPEED;
+
+        this.vy += GRAVITY;
+        this.vx *= FRICTION;
+        this.vy *= FRICTION;
+        this.x += this.vx;
+        this.y += this.vy;
+
+        this.rotorAngle += 0.8;
+        
+        // UI Updates
+        document.getElementById('fuel-level').style.width = this.fuel + '%';
+        document.getElementById('alt').innerText = Math.floor(600 - this.y);
+        
+        if (this.fuel <= 0 && this.vy > 1) this.fuel = 0;
+    },
+
+    draw() {
+        ctx.save();
+        ctx.translate(this.x - camera.x, this.y - camera.y);
+        ctx.rotate(this.angle);
+
+        // Body
+        ctx.fillStyle = '#333';
+        ctx.fillRect(-20, -10, 40, 20);
+        ctx.fillStyle = '#555';
+        ctx.fillRect(10, -5, 15, 10); // Cockpit
+
+        // Tail
+        ctx.strokeStyle = '#333';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(-20, 0);
+        ctx.lineTo(-45, 0);
+        ctx.stroke();
+        ctx.fillRect(-50, -10, 5, 15); // Tail fin
+
+        // Skids
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(-15, 10); ctx.lineTo(-15, 15);
+        ctx.moveTo(15, 10); ctx.lineTo(15, 15);
+        ctx.moveTo(-20, 15); ctx.lineTo(20, 15);
+        ctx.stroke();
+
+        // Main Rotor (Animation)
+        ctx.strokeStyle = '#eee';
+        let rWidth = Math.cos(this.rotorAngle) * 50;
+        ctx.beginPath();
+        ctx.moveTo(-rWidth, -15);
+        ctx.lineTo(rWidth, -15);
+        ctx.stroke();
+
+        ctx.restore();
+    }
+};
+
+/**
+ * WORLD & TERRAIN
+ */
+const terrain = [];
+const people = [];
+const pad = { x: 100, y: 500, w: 80 };
+
+function initWorld() {
+    // Simple flat start
+    for(let i=0; i<5000; i+= 50) {
+        let h = 500 + Math.sin(i * 0.01) * 100 + Math.random() * 20;
+        if (i < 300) h = 550; // Flat landing zone
+        terrain.push({x: i, y: h});
+    }
+
+    // Spawn 3 people
+    for(let i=0; i<3; i++) {
+        people.push({
+            x: 800 + (i * 1000),
+            y: 0, // calculated later
+            saved: false,
+            pickedUp: false
+        });
+    }
+}
+
+function drawWorld() {
+    // Terrain
+    ctx.fillStyle = '#2d1b0d';
+    ctx.beginPath();
+    ctx.moveTo(terrain[0].x - camera.x, canvas.height);
+    for(let p of terrain) {
+        ctx.lineTo(p.x - camera.x, p.y - camera.y);
+        // Collision detection (Simple)
+        if (Math.abs(heli.x - p.x) < 25 && heli.y > p.y - 15) {
+            if (Math.abs(heli.vx) > 1.5 || Math.abs(heli.vy) > 1.5 || Math.abs(heli.angle) > 0.5) {
+                explode();
+            } else {
+                // Safe landing on terrain
+                heli.vy = 0;
+                heli.y = p.y - 15;
+            }
+        }
+    }
+    ctx.lineTo(terrain[terrain.length-1].x - camera.x, canvas.height);
+    ctx.fill();
+
+    // Landing Pad
+    ctx.fillStyle = '#0ff';
+    ctx.fillRect(pad.x - camera.x, pad.y - camera.y, pad.w, 10);
+    ctx.fillStyle = 'white';
+    ctx.fillText("H", pad.x + 35 - camera.x, pad.y - 5 - camera.y);
+
+    // People
+    people.forEach(p => {
+        if (!p.saved && !p.pickedUp) {
+            // Snap to terrain height
+            let t = terrain.find(tp => tp.x > p.x);
+            p.y = t ? t.y : 500;
+            
+            ctx.fillStyle = '#ff00ff';
+            ctx.fillRect(p.x - camera.x, p.y - 15 - camera.y, 8, 15);
+
+            // Rescue Pickup
+            let d = Math.hypot(heli.x - p.x, heli.y - p.y);
+            if (d < 40 && Math.abs(heli.vx) < 1 && Math.abs(heli.vy) < 1) {
+                p.pickedUp = true;
+                passengers++;
+            }
+        }
+    });
+
+    // Landing Logic
+    let distToPad = Math.hypot(heli.x - (pad.x + 40), heli.y - pad.y);
+    if (distToPad < 40 && Math.abs(heli.vy) < 0.5 && passengers > 0) {
+        rescuedCount += passengers;
+        score += passengers * 1000;
+        passengers = 0;
+        heli.fuel = Math.min(100, heli.fuel + 30);
+        document.getElementById('res').innerText = rescuedCount;
+        document.getElementById('score').innerText = score;
+    }
+}
+
+/**
+ * PARTICLES
+ */
+let particles = [];
+function spawnParticles(x, y, color, count) {
+    for(let i=0; i<count; i++) {
+        particles.push({
+            x, y,
+            vx: (Math.random()-0.5) * 5,
+            vy: (Math.random()-0.5) * 5,
+            life: 1,
+            color
+        });
+    }
+}
+
+function updateParticles() {
+    particles = particles.filter(p => p.life > 0);
+    particles.forEach(p => {
+        p.x += p.vx;
+        p.y += p.vy;
+        p.life -= 0.02;
+        ctx.globalAlpha = p.life;
+        ctx.fillStyle = p.color;
+        ctx.fillRect(p.x - camera.x, p.y - camera.y, 3, 3);
+    });
+    ctx.globalAlpha = 1;
+}
+
+function explode() {
+    if(!gameActive) return;
+    spawnParticles(heli.x, heli.y, 'orange', 50);
+    spawnParticles(heli.x, heli.y, 'yellow', 30);
+    gameActive = false;
+    msg.style.display = 'block';
+}
+
+function resetGame() {
+    location.reload();
+}
+
+/**
+ * GAME LOOP
+ */
+function loop() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Camera follow (lerp)
+    camera.x += (heli.x - canvas.width/2 - camera.x) * 0.1;
+    camera.y += (heli.y - canvas.height/2 - camera.y) * 0.1;
+
+    drawWorld();
+    heli.update();
+    heli.draw();
+    updateParticles();
+
+    requestAnimationFrame(loop);
+}
+
+initWorld();
+loop();
+
+</script>
+</body>
+</html>

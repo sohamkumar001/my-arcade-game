@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Neon Brawler Mobile</title>
+    <style>
+        :root { --p1: #ff0055; --p2: #00f2ff; }
+        body {
+            margin: 0; background: #0a0a0a; color: white;
+            font-family: 'Courier New', Courier, monospace;
+            overflow: hidden; display: flex; flex-direction: column; align-items: center;
+            user-select: none; -webkit-user-select: none; touch-action: none;
+        }
+        #ui {
+            width: 100%; max-width: 800px; display: flex; 
+            justify-content: space-between; padding: 10px; box-sizing: border-box;
+        }
+        .hp-box { width: 40%; height: 20px; background: #333; border: 1px solid #fff; }
+        .hp-fill { height: 100%; width: 100%; transition: width 0.2s; }
+        #p1-hp { background: var(--p1); box-shadow: 0 0 10px var(--p1); }
+        #p2-hp { background: var(--p2); box-shadow: 0 0 10px var(--p2); }
+
+        canvas { background: #000; border-bottom: 3px solid #333; width: 100%; max-width: 800px; }
+
+        /* Mobile Controls Overlay */
+        .controls-container {
+            display: flex; justify-content: space-between; width: 100%;
+            max-width: 800px; padding: 20px; box-sizing: border-box;
+        }
+        .pad { display: grid; grid-template-columns: repeat(3, 50px); gap: 10px; }
+        .btn {
+            width: 50px; height: 50px; background: rgba(255,255,255,0.1);
+            border: 2px solid #fff; border-radius: 10px;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: bold; color: #fff; touch-action: none;
+        }
+        .btn:active { background: rgba(255,255,255,0.4); transform: scale(0.9); }
+        .p1-btn { border-color: var(--p1); color: var(--p1); }
+        .p2-btn { border-color: var(--p2); color: var(--p2); }
+
+        #overlay {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.9); padding: 30px; border: 2px solid #fff;
+            text-align: center; display: none; z-index: 100;
+        }
+    </style>
+</head>
+<body onload="init()">
+
+    <div id="ui">
+        <div class="hp-box"><div id="p1-hp" class="hp-fill"></div></div>
+        <div id="p1-hp">P1</div>
+        <div id="p2-hp">P2</div>
+        <div class="hp-box"><div id="p2-hp-fill" class="hp-fill" style="background:var(--p2)"></div></div>
+    </div>
+
+    <canvas id="gameCanvas" width="800" height="400"></canvas>
+
+    <div class="controls-container">
+        <div class="pad">
+            <div class="btn p1-btn" id="p1-left">◀</div>
+            <div class="btn p1-btn" id="p1-up">▲</div>
+            <div class="btn p1-btn" id="p1-right">▶</div>
+            <div></div><div class="btn p1-btn" id="p1-atk" style="grid-column: span 2; width: 110px;">HIT</div>
+        </div>
+
+        <div class="pad">
+            <div class="btn p2-btn" id="p2-left">◀</div>
+            <div class="btn p2-btn" id="p2-up">▲</div>
+            <div class="btn p2-btn" id="p2-right">▶</div>
+            <div class="btn p2-btn" id="p2-atk" style="grid-column: span 2; width: 110px; margin-left: auto;">HIT</div>
+        </div>
+    </div>
+
+    <div id="overlay">
+        <h1 id="win-msg"></h1>
+        <button onclick="location.reload()" style="padding:10px 20px;">REMATCH</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const gravity = 0.8;
+
+        let p1, p2, gameActive = true;
+        const keys = {
+            a:false, d:false, w:false, space:false,
+            ArrowLeft:false, ArrowRight:false, ArrowUp:false, Enter:false
+        };
+
+        class Fighter {
+            constructor({ x, y, color, side, name }) {
+                this.pos = { x, y };
+                this.vel = { x: 0, y: 0 };
+                this.width = 50; this.height = 120;
+                this.color = color;
+                this.hp = 100;
+                this.isAttacking = false;
+                this.side = side; // 1 for right, -1 for left
+            }
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.shadowBlur = 15; ctx.shadowColor = this.color;
+                ctx.fillRect(this.pos.x, this.pos.y, this.width, this.height);
+                
+                if(this.isAttacking) {
+                    ctx.fillStyle = 'white';
+                    ctx.fillRect(this.side === 1 ? this.pos.x + 50 : this.pos.x - 50, this.pos.y + 20, 50, 20);
+                }
+                ctx.shadowBlur = 0;
+            }
+            update() {
+                this.pos.x += this.vel.x;
+                this.pos.y += this.vel.y;
+                if (this.pos.y + this.height + this.vel.y >= canvas.height) {
+                    this.vel.y = 0; this.pos.y = canvas.height - this.height;
+                } else this.vel.y += gravity;
+                this.draw();
+            }
+            attack() {
+                if(this.isAttacking) return;
+                this.isAttacking = true;
+                setTimeout(() => this.isAttacking = false, 150);
+            }
+        }
+
+        function init() {
+            p1 = new Fighter({ x: 100, y: 0, color: '#ff0055', side: 1 });
+            p2 = new Fighter({ x: 650, y: 0, color: '#00f2ff', side: -1 });
+            setupMobile('p1-left', 'a'); setupMobile('p1-right', 'd'); setupMobile('p1-up', 'w'); setupMobile('p1-atk', 'space');
+            setupMobile('p2-left', 'ArrowLeft'); setupMobile('p2-right', 'ArrowRight'); setupMobile('p2-up', 'ArrowUp'); setupMobile('p2-atk', 'Enter');
+            loop();
+        }
+
+        function setupMobile(id, key) {
+            const btn = document.getElementById(id);
+            btn.addEventListener('touchstart', (e) => { e.preventDefault(); keys[key] = true; if(key === 'space') p1.attack(); if(key === 'Enter') p2.attack(); });
+            btn.addEventListener('touchend', (e) => { e.preventDefault(); keys[key] = false; });
+        }
+
+        function checkHit(atk, vic) {
+            const atkX = atk.side === 1 ? atk.pos.x + 50 : atk.pos.x - 50;
+            return (atk.isAttacking && atkX + 50 >= vic.pos.x && atkX <= vic.pos.x + vic.width && atk.pos.y + 20 >= vic.pos.y && atk.pos.y + 20 <= vic.pos.y + vic.height);
+        }
+
+        function loop() {
+            if(!gameActive) return;
+            ctx.fillStyle = 'black'; ctx.fillRect(0,0,canvas.width,canvas.height);
+
+            p1.vel.x = 0; p2.vel.x = 0;
+            if(keys.a) p1.vel.x = -5; if(keys.d) p1.vel.x = 5; if(keys.w && p1.pos.y + p1.height >= canvas.height) p1.vel.y = -18;
+            if(keys.ArrowLeft) p2.vel.x = -5; if(keys.ArrowRight) p2.vel.x = 5; if(keys.ArrowUp && p2.pos.y + p2.height >= canvas.height) p2.vel.y = -18;
+
+            p1.update(); p2.update();
+
+            if(checkHit(p1, p2)) { p2.hp -= 1; document.getElementById('p2-hp-fill').style.width = p2.hp + '%'; p1.isAttacking = false; }
+            if(checkHit(p2, p1)) { p1.hp -= 1; document.getElementById('p1-hp').style.width = p1.hp + '%'; p2.isAttacking = false; }
+
+            if(p1.hp <= 0 || p2.hp <= 0) {
+                gameActive = false;
+                document.getElementById('overlay').style.display = 'block';
+                document.getElementById('win-msg').innerText = p1.hp <= 0 ? "PLAYER 2 VICTORIOUS" : "PLAYER 1 VICTORIOUS";
+            }
+            requestAnimationFrame(loop);
+        }
+
+        window.onkeydown = (e) => { let k = e.key === ' ' ? 'space' : e.key; keys[k] = true; if(k === 'space') p1.attack(); if(k === 'Enter') p2.attack(); };
+        window.onkeyup = (e) => { let k = e.key === ' ' ? 'space' : e.key; keys[k] = false; };
+    </script>
+</body>
+</html>

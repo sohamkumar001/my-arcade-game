@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Cyber-Hunter: Mobile Breach</title>
+    <style>
+        :root { --neon: #0f0; --bg: #050505; }
+        * { touch-action: manipulation; user-select: none; -webkit-tap-highlight-color: transparent; }
+        body { 
+            background: var(--bg); color: var(--neon); font-family: 'Courier New', monospace; 
+            display: flex; flex-direction: column; align-items: center; margin: 0; overflow: hidden;
+            height: 100vh;
+        }
+        
+        #hud { 
+            width: 95%; margin-top: 5px; padding: 10px; border: 1px solid var(--neon);
+            display: flex; justify-content: space-between; background: rgba(0,20,0,0.8);
+            box-shadow: 0 0 10px var(--neon); border-radius: 5px; font-size: 0.8rem;
+        }
+
+        #game-area { position: relative; flex-grow: 1; display: flex; align-items: center; justify-content: center; width: 100%; overflow: hidden; }
+        canvas { background: #000; border: 1px solid #222; max-width: 100%; max-height: 100%; }
+
+        #hack-ui { 
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); 
+            background: #000; border: 3px solid var(--neon); padding: 20px; 
+            display: none; text-align: center; z-index: 100; width: 80%;
+        }
+
+        input { background: #000; border: 1px solid var(--neon); color: #fff; font-size: 1.5rem; width: 80%; text-align: center; outline: none; margin-top: 10px;}
+
+        /* Mobile Controls */
+        #controls {
+            display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(2, 1fr);
+            gap: 10px; width: 100%; padding: 20px; box-sizing: border-box; background: #111;
+        }
+        .btn {
+            background: rgba(0, 255, 0, 0.1); border: 1px solid var(--neon); color: var(--neon);
+            height: 60px; display: flex; align-items: center; justify-content: center;
+            font-weight: bold; border-radius: 10px; font-size: 1.2rem;
+        }
+        .btn:active { background: var(--neon); color: #000; }
+        .span-2 { grid-column: span 2; }
+
+        @media (min-width: 800px) { #controls { display: none; } }
+    </style>
+</head>
+<body>
+
+<div id="hud">
+    <div>LVL: <span id="lvl">1</span></div>
+    <div>DECOYS: <span id="decoys">3</span></div>
+    <div>FRAGS: <span id="frags">0</span></div>
+</div>
+
+<div id="game-area">
+    <canvas id="gameCanvas"></canvas>
+    <div id="hack-ui">
+        <div style="font-size: 0.6rem; color: #888;">ENCRYPTION DETECTED</div>
+        <h2 id="q-text" style="margin: 10px 0;">ERROR</h2>
+        <input type="text" id="ans-input" autocomplete="off">
+        <div class="btn" style="height: 40px; margin-top: 15px; font-size: 0.8rem;" onclick="checkHack()">SUBMIT</div>
+    </div>
+</div>
+
+<div id="controls">
+    <div class="btn" onpointerdown="move('w')">▲</div>
+    <div class="btn" onpointerdown="fire()">FIRE</div>
+    <div class="btn" onpointerdown="decoy()">DECOY</div>
+    <div class="btn" onpointerdown="move('a')">◀</div>
+    <div class="btn" onpointerdown="move('s')">▼</div>
+    <div class="btn" onpointerdown="move('d')">▶</div>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+let level = 1, hue = 120, frags = 0;
+let tileSize, cols, rows, grid = [];
+let player = { x: 1, y: 1, decoys: 3 };
+let lastDir = { x: 1, y: 0 };
+let drones = [], bullets = [], decoys = [], isHacking = false, targetAns = "";
+
+const gkPool = [
+    {q: "Red Planet?", a: "mars"},
+    {q: "H2O?", a: "water"},
+    {q: "10 + 15?", a: "25"},
+    {q: "Opposite of Up?", a: "down"},
+    {q: "Sun is a...?", a: "star"}
+];
+
+function initLevel() {
+    cols = 15 + level; rows = 11 + level;
+    const padding = 20;
+    const availableWidth = window.innerWidth - padding;
+    const availableHeight = document.getElementById('game-area').clientHeight - padding;
+    tileSize = Math.min(availableWidth / cols, availableHeight / rows, 40);
+    
+    canvas.width = cols * tileSize; 
+    canvas.height = rows * tileSize;
+    
+    createMaze();
+    player.x = 1; player.y = 1; player.decoys = 3;
+    bullets = []; decoys = [];
+    hue = (120 + (level * 50)) % 360;
+    document.documentElement.style.setProperty('--neon', `hsl(${hue}, 100%, 50%)`);
+    drones = Array(Math.min(2 + level, 6)).fill().map(() => ({ x: cols-2, y: rows-2 }));
+    
+    document.getElementById('lvl').innerText = level;
+    document.getElementById('decoys').innerText = player.decoys;
+}
+
+function createMaze() {
+    grid = Array(rows).fill().map(() => Array(cols).fill(1));
+    const stack = [[1, 1]]; grid[1][1] = 0;
+    while (stack.length > 0) {
+        const [x, y] = stack[stack.length - 1];
+        const neighbors = [[0,2],[0,-2],[2,0],[-2,0]].map(([dx, dy]) => [x+dx, y+dy])
+            .filter(([nx, ny]) => nx > 0 && nx < cols-1 && ny > 0 && ny < rows-1 && grid[ny][nx] === 1);
+        if (neighbors.length > 0) {
+            const [nx, ny] = neighbors[Math.floor(Math.random() * neighbors.length)];
+            grid[ny][nx] = 0; grid[y + (ny-y)/2][x + (nx-x)/2] = 0;
+            stack.push([nx, ny]);
+        } else stack.pop();
+    }
+    for(let i=0; i < 2 + (level * 2); i++){
+        let rx = Math.floor(Math.random()*cols), ry = Math.floor(Math.random()*rows);
+        if(grid[ry][rx] === 0 && rx > 3) grid[ry][rx] = 2;
+    }
+    grid[rows-2][cols-2] = 3; 
+}
+
+function move(dir) {
+    if(isHacking) return;
+    let nx = player.x, ny = player.y;
+    if(dir === 'w') { ny--; lastDir = {x:0, y:-1}; }
+    if(dir === 's') { ny++; lastDir = {x:0, y:1}; }
+    if(dir === 'a') { nx--; lastDir = {x:-1, y:0}; }
+    if(dir === 'd') { nx++; lastDir = {x:1, y:0}; }
+
+    if(grid[ny] && grid[ny][nx] === 0) { player.x = nx; player.y = ny; }
+    else if(grid[ny] && grid[ny][nx] === 2) startHack(nx, ny);
+    else if(grid[ny] && grid[ny][nx] === 3) { level++; initLevel(); }
+}
+
+function fire() {
+    bullets.push({x: player.x + 0.5, y: player.y + 0.5, vx: lastDir.x * 0.4, vy: lastDir.y * 0.4});
+}
+
+function decoy() {
+    if(player.decoys > 0) {
+        decoys.push({x: player.x, y: player.y, timer: 100});
+        player.decoys--;
+        document.getElementById('decoys').innerText = player.decoys;
+    }
+}
+
+function startHack(x, y) {
+    isHacking = true;
+    document.getElementById('hack-ui').style.display = 'block';
+    let entry = gkPool[Math.floor(Math.random() * gkPool.length)];
+    targetAns = entry.a;
+    document.getElementById('q-text').innerText = entry.q;
+    const input = document.getElementById('ans-input');
+    input.value = ""; 
+    input.focus();
+    input.onkeydown = (e) => { if(e.key === 'Enter') checkHack(x, y); };
+    window.currentHack = {x, y};
+}
+
+function checkHack() {
+    const input = document.getElementById('ans-input');
+    if(input.value.toLowerCase().trim() == targetAns) {
+        grid[window.currentHack.y][window.currentHack.x] = 0;
+        isHacking = false;
+        document.getElementById('hack-ui').style.display = 'none';
+    }
+}
+
+window.onkeydown = (e) => {
+    if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," "].includes(e.key)) e.preventDefault();
+    if(e.key === 'w' || e.key === 'ArrowUp') move('w');
+    if(e.key === 's' || e.key === 'ArrowDown') move('s');
+    if(e.key === 'a' || e.key === 'ArrowLeft') move('a');
+    if(e.key === 'd' || e.key === 'ArrowRight') move('d');
+    if(e.key === ' ') fire();
+    if(e.shiftKey) decoy();
+};
+
+setInterval(() => {
+    if(isHacking) return;
+    drones.forEach(d => {
+        let target = decoys.length > 0 ? decoys[0] : player;
+        let options = [[0,1],[0,-1],[1,0],[-1,0]]
+            .map(([dx, dy]) => ({x: d.x+dx, y: d.y+dy, dist: Math.hypot(target.x-(d.x+dx), target.y-(d.y+dy))}))
+            .filter(o => grid[o.y][o.x] === 0 || grid[o.y][o.x] === 2)
+            .sort((a, b) => a.dist - b.dist);
+        if(options.length > 0) { d.x = options[0].x; d.y = options[0].y; }
+        if(d.x === player.x && d.y === player.y) { alert("CAUGHT!"); level = 1; initLevel(); }
+    });
+}, 400);
+
+function update() {
+    decoys = decoys.filter(d => { d.timer--; return d.timer > 0; });
+    for (let i = bullets.length - 1; i >= 0; i--) {
+        let b = bullets[i]; b.x += b.vx; b.y += b.vy;
+        let gx = Math.floor(b.x), gy = Math.floor(b.y);
+        if (!grid[gy] || grid[gy][gx] === 1) { bullets.splice(i, 1); continue; }
+        drones.forEach((d, di) => {
+            if(Math.hypot(d.x + 0.5 - b.x, d.y + 0.5 - b.y) < 0.7) {
+                drones.splice(di, 1); bullets.splice(i, 1);
+                frags++; document.getElementById('frags').innerText = frags;
+                setTimeout(() => drones.push({x: cols-2, y: rows-2}), 3000);
+            }
+        });
+    }
+}
+
+function render() {
+    ctx.clearRect(0,0,canvas.width, canvas.height);
+    for(let r=0; r<rows; r++) {
+        for(let c=0; c<cols; c++) {
+            if(grid[r][c] === 1) {
+                ctx.fillStyle = `hsl(${hue}, 100%, 5%)`;
+                ctx.fillRect(c*tileSize, r*tileSize, tileSize, tileSize);
+            } else if(grid[r][c] === 2) {
+                ctx.fillStyle = '#f22'; ctx.fillRect(c*tileSize+tileSize*0.2, r*tileSize+tileSize*0.2, tileSize*0.6, tileSize*0.6);
+            } else if(grid[r][c] === 3) {
+                ctx.fillStyle = '#fff'; ctx.fillRect(c*tileSize, r*tileSize, tileSize, tileSize);
+            }
+        }
+    }
+    ctx.fillStyle = '#44f';
+    decoys.forEach(d => ctx.fillRect(d.x*tileSize+tileSize*0.2, d.y*tileSize+tileSize*0.2, tileSize*0.6, tileSize*0.6));
+    ctx.fillStyle = `hsl(${hue}, 100%, 50%)`;
+    ctx.fillRect(player.x*tileSize+tileSize*0.1, player.y*tileSize+tileSize*0.1, tileSize*0.8, tileSize*0.8);
+    ctx.fillStyle = '#f00';
+    drones.forEach(d => {
+        ctx.beginPath(); ctx.arc(d.x*tileSize+tileSize/2, d.y*tileSize+tileSize/2, tileSize/3, 0, Math.PI*2); ctx.fill();
+    });
+    ctx.fillStyle = '#fff';
+    bullets.forEach(b => {
+        ctx.beginPath(); ctx.arc(b.x*tileSize, b.y*tileSize, tileSize/8, 0, Math.PI*2); ctx.fill();
+    });
+    update();
+    requestAnimationFrame(render);
+}
+
+window.onresize = initLevel;
+initLevel(); 
+render();
+</script>
+</body>
+</html>

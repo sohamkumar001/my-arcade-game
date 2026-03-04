@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neon Whack-A-Mole</title>
+    <style>
+        :root {
+            --grass-color: #2ecc71;
+            --hole-color: #3e2723;
+            --mole-color: #795548;
+            --accent: #e74c3c;
+        }
+
+        body {
+            margin: 0;
+            padding: 20px;
+            background: #a2d2ff;
+            font-family: 'Arial Rounded MT Bold', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            overflow-x: hidden;
+        }
+
+        h1 { color: #fff; text-shadow: 2px 2px #333; margin: 10px; }
+
+        /* UI Panel */
+        .stats-bar {
+            background: white;
+            padding: 15px 30px;
+            border-radius: 50px;
+            display: flex;
+            gap: 30px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+            margin-bottom: 20px;
+            font-size: 1.2rem;
+        }
+
+        .stat span { color: var(--accent); font-weight: bold; }
+
+        /* Grid System */
+        .game-area {
+            display: grid;
+            grid-template-columns: repeat(3, 160px);
+            grid-template-rows: repeat(3, 130px);
+            gap: 20px;
+            background: var(--grass-color);
+            padding: 30px;
+            border-radius: 20px;
+            border-bottom: 10px solid #27ae60;
+        }
+
+        .hole {
+            background: var(--hole-color);
+            border-radius: 50%;
+            position: relative;
+            overflow: hidden; /* Clips the mole when it slides down */
+            box-shadow: inset 0 10px 0 rgba(0,0,0,0.3);
+        }
+
+        /* The Mole Character */
+        .mole {
+            width: 100%;
+            height: 100%;
+            background: var(--mole-color);
+            position: absolute;
+            top: 100%; /* Hidden by default */
+            border-radius: 50% 50% 0 0;
+            transition: transform 0.2s cubic-bezier(0.17, 0.67, 0.83, 0.67);
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+        }
+
+        /* Mole Features */
+        .mole::before {
+            content: '👀';
+            font-size: 2rem;
+            margin-top: 15px;
+        }
+
+        .mole.up {
+            transform: translateY(-85%);
+        }
+
+        .mole.hit {
+            transform: translateY(100%);
+            background: var(--accent);
+        }
+
+        /* Controls */
+        .controls { margin-top: 30px; display: flex; gap: 10px; }
+        
+        button {
+            padding: 12px 25px;
+            font-size: 1rem;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            background: #333;
+            color: white;
+            transition: 0.2s;
+        }
+
+        button:hover { transform: scale(1.05); }
+        #start-btn { background: var(--accent); }
+        #pause-btn { background: #f39c12; }
+
+    </style>
+</head>
+<body>
+
+    <h1>MOLE MAYHEM</h1>
+
+    <div class="stats-bar">
+        <div class="stat">Score: <span id="score">0</span></div>
+        <div class="stat">Time: <span id="timer">30</span>s</div>
+    </div>
+
+    <div class="game-area">
+        <div class="hole"><div class="mole"></div></div>
+        <div class="hole"><div class="mole"></div></div>
+        <div class="hole"><div class="mole"></div></div>
+        <div class="hole"><div class="mole"></div></div>
+        <div class="hole"><div class="mole"></div></div>
+        <div class="hole"><div class="mole"></div></div>
+        <div class="hole"><div class="mole"></div></div>
+        <div class="hole"><div class="mole"></div></div>
+        <div class="hole"><div class="mole"></div></div>
+    </div>
+
+    <div class="controls">
+        <button id="start-btn">Start Game</button>
+        <button id="pause-btn">Pause</button>
+        <button onclick="resetGame()">Restart</button>
+    </div>
+
+<script>
+    /**
+     * STATE MANAGEMENT
+     */
+    const holes = document.querySelectorAll('.hole');
+    const moles = document.querySelectorAll('.mole');
+    const scoreBoard = document.querySelector('#score');
+    const timerBoard = document.querySelector('#timer');
+    const startBtn = document.querySelector('#start-btn');
+    const pauseBtn = document.querySelector('#pause-btn');
+
+    let lastHole;
+    let timeUp = false;
+    let score = 0;
+    let timeLeft = 30;
+    let gameActive = false;
+    let timerId;
+    let moleTimeout;
+
+    /**
+     * AUDIO SYNTHESIZER
+     * Uses Web Audio API to generate a "pop" sound without external assets
+     */
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    function playHitSound() {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(600, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.1);
+        gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+        gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.1);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.1);
+    }
+
+    /**
+     * CORE LOGIC
+     */
+    function randomTime(min, max) {
+        return Math.round(Math.random() * (max - min) + min);
+    }
+
+    function randomHole(holes) {
+        const idx = Math.floor(Math.random() * holes.length);
+        const hole = holes[idx];
+        if (hole === lastHole) return randomHole(holes);
+        lastHole = hole;
+        return hole;
+    }
+
+    function peep() {
+        if (!gameActive || timeUp) return;
+
+        // Difficulty curves: Moles stay up for less time as the game progresses
+        const difficultyModifier = (timeLeft / 30); // 1.0 down to 0
+        const time = randomTime(200 + (600 * difficultyModifier), 800 * difficultyModifier + 200);
+        
+        const hole = randomHole(holes);
+        const mole = hole.querySelector('.mole');
+        
+        mole.classList.remove('hit');
+        mole.classList.add('up');
+
+        moleTimeout = setTimeout(() => {
+            mole.classList.remove('up');
+            if (!timeUp) peep();
+        }, time);
+    }
+
+    function startGame() {
+        if (gameActive) return;
+        
+        gameActive = true;
+        timeUp = false;
+        startBtn.disabled = true;
+        audioCtx.resume();
+        
+        peep();
+        countdown();
+    }
+
+    function countdown() {
+        timerId = setInterval(() => {
+            if (!gameActive) return;
+            
+            timeLeft--;
+            timerBoard.textContent = timeLeft;
+            
+            if (timeLeft <= 0) {
+                gameOver();
+            }
+        }, 1000);
+    }
+
+    function gameOver() {
+        clearInterval(timerId);
+        timeUp = true;
+        gameActive = false;
+        startBtn.disabled = false;
+        alert(`Time's Up! Final Score: ${score}`);
+    }
+
+    function togglePause() {
+        if (!gameActive && timeLeft > 0 && timeLeft < 30) {
+            // Resume
+            gameActive = true;
+            pauseBtn.textContent = "Pause";
+            peep();
+        } else {
+            // Pause
+            gameActive = false;
+            pauseBtn.textContent = "Resume";
+            clearTimeout(moleTimeout);
+            moles.forEach(m => m.classList.remove('up'));
+        }
+    }
+
+    function resetGame() {
+        location.reload(); // Simple way to reset all states
+    }
+
+    /**
+     * INTERACTION
+     */
+    function bonk(e) {
+        if (!e.isTrusted) return; // Anti-cheat: prevent simulated clicks
+        if (!this.classList.contains('up')) return; // Can't hit mole while it's down
+
+        score++;
+        playHitSound();
+        this.classList.remove('up');
+        this.classList.add('hit');
+        scoreBoard.textContent = score;
+    }
+
+    moles.forEach(mole => mole.addEventListener('click', bonk));
+    startBtn.addEventListener('click', startGame);
+    pauseBtn.addEventListener('click', togglePause);
+
+</script>
+</body>
+</html>

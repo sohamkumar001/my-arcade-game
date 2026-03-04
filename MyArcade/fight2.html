@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>CYBER-STRIKE 2026</title>
+    <style>
+        :root { --p1: #00ff88; --p2: #ff00ff; --bg: #050508; }
+        body {
+            margin: 0; background: var(--bg); color: white;
+            font-family: 'Orbitron', sans-serif; overflow: hidden;
+            display: flex; flex-direction: column; align-items: center;
+            user-select: none; touch-action: none;
+        }
+        #menu, #overlay {
+            position: fixed; inset: 0; background: rgba(5, 5, 8, 0.95);
+            display: flex; flex-direction: column; justify-content: center;
+            align-items: center; z-index: 2000; backdrop-filter: blur(10px);
+        }
+        .panel {
+            background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.2);
+            padding: 40px; border-radius: 20px; text-align: center; box-shadow: 0 0 30px rgba(0,0,0,0.5);
+        }
+        h1 { font-size: 3rem; letter-spacing: 5px; margin-bottom: 30px; 
+             background: linear-gradient(to right, var(--p1), var(--p2)); 
+             -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        
+        button {
+            display: block; width: 250px; padding: 15px; margin: 10px;
+            background: transparent; color: white; border: 2px solid #444;
+            cursor: pointer; font-family: 'Orbitron', sans-serif; font-weight: bold;
+            transition: 0.3s; border-radius: 5px;
+        }
+        button:hover { border-color: var(--p1); box-shadow: 0 0 15px var(--p1); }
+        .diff-btn { width: 80px; display: inline-block; margin: 5px; font-size: 10px; }
+        .active-diff { border-color: var(--p2); box-shadow: 0 0 10px var(--p2); }
+
+        #ui {
+            width: 100%; max-width: 800px; display: flex; 
+            justify-content: space-between; padding: 15px; box-sizing: border-box;
+            position: relative; z-index: 100;
+        }
+        .hp-bar { height: 12px; background: #111; border: 1px solid #333; width: 100%; border-radius: 6px; overflow: hidden; margin-top: 5px; }
+        .hp-fill { height: 100%; width: 100%; transition: width 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        
+        canvas { 
+            background: #000; width: 100%; max-width: 800px; 
+            box-shadow: 0 0 50px rgba(0, 255, 136, 0.1); border-radius: 10px;
+            display: block;
+        }
+
+        .controls-container { display: flex; justify-content: space-between; width: 100%; max-width: 800px; padding: 20px; }
+        .btn {
+            width: 60px; height: 60px; background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.3); border-radius: 50%;
+            display: flex; align-items: center; justify-content: center; font-size: 20px;
+        }
+    </style>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+    <div id="menu">
+        <div class="panel">
+            <h1>CYBER-STRIKE 2026</h1>
+            <button onclick="startGame('pvp')">2 PLAYER (LOCAL)</button>
+            <button onclick="startGame('ai')">VS CYBER-BOT</button>
+            <div id="ai-levels" style="margin-top: 10px;">
+                <button class="diff-btn" onclick="setDiff(0)" id="d0">EASY</button>
+                <button class="diff-btn active-diff" onclick="setDiff(1)" id="d1">MED</button>
+                <button class="diff-btn" onclick="setDiff(2)" id="d2">HARD</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="ui">
+        <div style="width: 40%;">
+            <div style="color: var(--p1); font-size: 12px;">UNIT_01</div>
+            <div class="hp-bar"><div id="p1-fill" class="hp-fill" style="background: var(--p1); box-shadow: 0 0 10px var(--p1);"></div></div>
+        </div>
+        <div style="width: 40%; text-align: right;">
+            <div style="color: var(--p2); font-size: 12px;">UNIT_02</div>
+            <div class="hp-bar"><div id="p2-fill" class="hp-fill" style="background: var(--p2); box-shadow: 0 0 10px var(--p2);"></div></div>
+        </div>
+    </div>
+
+    <canvas id="gameCanvas" width="800" height="400"></canvas>
+
+    <div class="controls-container" id="mobile-ctrl">
+        <div style="display: flex; gap: 10px;">
+            <div class="btn" id="p1-left" style="color:var(--p1)">◀</div>
+            <div class="btn" id="p1-up" style="color:var(--p1)">▲</div>
+            <div class="btn" id="p1-right" style="color:var(--p1)">▶</div>
+            <div class="btn" id="p1-atk" style="background: var(--p1); color: black;">⚔</div>
+        </div>
+        <div id="p2-mobile" style="display: flex; gap: 10px;">
+            <div class="btn" id="p2-atk" style="background: var(--p2); color: black;">⚔</div>
+            <div class="btn" id="p2-left" style="color:var(--p2)">◀</div>
+            <div class="btn" id="p2-up" style="color:var(--p2)">▲</div>
+            <div class="btn" id="p2-right" style="color:var(--p2)">▶</div>
+        </div>
+    </div>
+
+    <div id="overlay" style="display: none;">
+        <div class="panel">
+            <h1 id="win-msg" style="font-size: 2.5rem;"></h1>
+            <button onclick="location.reload()">REBOOT SYSTEM</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        let p1, p2, gameActive = false, gameMode = 'pvp', difficulty = 1; 
+        const keys = {};
+
+        class Fighter {
+            constructor({ x, y, color, isAI }) {
+                this.pos = { x, y };
+                this.vel = { x: 0, y: 0 };
+                this.width = 40; this.height = 80;
+                this.color = color;
+                this.hp = 100;
+                this.isAttacking = false;
+                this.swordAngle = 0;
+                this.isAI = isAI;
+                this.isDead = false;
+                this.rot = 0;
+            }
+
+            draw() {
+                ctx.save();
+                if (this.isDead) {
+                    this.rot += 0.2;
+                    ctx.translate(this.pos.x + 20, this.pos.y + 40);
+                    ctx.rotate(this.rot);
+                    ctx.translate(-(this.pos.x + 20), -(this.pos.y + 40));
+                    this.pos.y -= 0.5; // Slower fall
+                }
+
+                ctx.shadowBlur = 20; ctx.shadowColor = this.color;
+                ctx.fillStyle = this.color;
+                ctx.fillRect(this.pos.x, this.pos.y, this.width, this.height);
+                ctx.shadowBlur = 0;
+                ctx.strokeStyle = "white";
+                ctx.lineWidth = 2;
+                ctx.strokeRect(this.pos.x+3, this.pos.y+3, this.width-6, this.height-6);
+
+                // Sword
+                ctx.save();
+                ctx.translate(this.pos.x + 20, this.pos.y + 40);
+                if (this.isAttacking) {
+                    this.swordAngle += 0.4;
+                    if (this.swordAngle >= Math.PI * 1.8) { 
+                        this.swordAngle = 0; 
+                        this.isAttacking = false; 
+                    }
+                }
+                ctx.rotate(this.swordAngle);
+                ctx.fillStyle = "#ffffff";
+                ctx.shadowBlur = 10; ctx.shadowColor = "#ffffff";
+                ctx.fillRect(-2, -5, 70, 10);
+                ctx.shadowBlur = 0;
+                ctx.restore();
+                ctx.restore();
+            }
+
+            update() {
+                this.pos.x = Math.max(0, Math.min(canvas.width - this.width, this.pos.x + this.vel.x));
+                this.pos.y += this.vel.y;
+                
+                if (this.pos.y + this.height >= canvas.height) {
+                    this.vel.y = 0; 
+                    this.pos.y = canvas.height - this.height;
+                } else {
+                    this.vel.y += 0.8;
+                }
+                this.draw();
+            }
+
+            attack() { 
+                if(!this.isDead && !this.isAttacking) {
+                    this.isAttacking = true; 
+                    this.swordAngle = 0;
+                }
+            }
+        }
+
+        function setDiff(d) {
+            difficulty = d;
+            [0,1,2].forEach(i => {
+                document.getElementById('d'+i).classList.remove('active-diff');
+            });
+            document.getElementById('d'+d).classList.add('active-diff');
+        }
+
+        function startGame(mode) {
+            gameMode = mode;
+            document.getElementById('menu').style.display = 'none';
+            if(mode === 'ai') {
+                document.getElementById('p2-mobile').style.opacity = '0.3';
+                document.getElementById('p2-mobile').style.pointerEvents = 'none';
+            }
+            init();
+        }
+
+        function init() {
+            p1 = new Fighter({ x: 100, y: 0, color: '#00ff88', isAI: false });
+            p2 = new Fighter({ x: 650, y: 0, color: '#ff00ff', isAI: (gameMode === 'ai') });
+            updateHPBars();
+            setupControls();
+            gameActive = true;
+            loop();
+        }
+
+        function updateHPBars() {
+            document.getElementById('p1-fill').style.width = p1.hp + '%';
+            document.getElementById('p2-fill').style.width = p2.hp + '%';
+        }
+
+        function updateAI() {
+            if (!p2.isAI || p2.isDead || p1.isDead) return;
+            
+            const dist = p1.pos.x - p2.pos.x;
+            const aiSpeed = [2, 3, 4][difficulty];
+            const reactionChance = [0.02, 0.05, 0.12][difficulty];
+
+            // AI Movement
+            if (Math.abs(dist) > 70) {
+                p2.vel.x = dist > 0 ? aiSpeed : -aiSpeed;
+            } else {
+                p2.vel.x *= 0.8; // Friction
+                if (Math.random() < reactionChance && !p2.isAttacking) {
+                    p2.attack();
+                }
+            }
+
+            // AI Jump logic
+            if (p2.pos.y >= canvas.height - p2.height && 
+                (Math.random() < 0.02 || 
+                 (difficulty === 2 && p1.isAttacking && Math.abs(dist) < 120))) {
+                p2.vel.y = -14;
+            }
+        }
+
+        function checkCollisions() {
+            [p1, p2].forEach((attacker, i) => {
+                if (!attacker.isAttacking || attacker.isDead) return;
+                
+                let victim = i === 0 ? p2 : p1;
+                if (victim.isDead) return;
+
+                // Sword tip collision
+                let swordX = attacker.pos.x + 20 + Math.cos(attacker.swordAngle) * 60;
+                let swordY = attacker.pos.y + 40 + Math.sin(attacker.swordAngle) * 60;
+                
+                if (swordX > victim.pos.x && swordX < victim.pos.x + victim.width &&
+                    swordY > victim.pos.y && swordY < victim.pos.y + victim.height) {
+                    victim.hp = Math.max(0, victim.hp - 1.2);
+                    updateHPBars();
+                }
+            });
+        }
+
+        function loop() {
+            if (!gameActive) return;
+            
+            // Trail effect
+            ctx.fillStyle = 'rgba(5, 5, 8, 0.3)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Player 1 controls
+            p1.vel.x = 0;
+            if (keys['a'] || keys['A']) p1.vel.x = -5;
+            if (keys['d'] || keys['D']) p1.vel.x = 5;
+            if ((keys['w'] || keys['W']) && p1.pos.y >= canvas.height - p1.height) {
+                p1.vel.y = -16;
+            }
+
+            // Player 2 controls or AI
+            if (!p2.isAI) {
+                p2.vel.x = 0;
+                if (keys['ArrowLeft']) p2.vel.x = -5;
+                if (keys['ArrowRight']) p2.vel.x = 5;
+                if (keys['ArrowUp'] && p2.pos.y >= canvas.height - p2.height) {
+                    p2.vel.y = -16;
+                }
+            } else {
+                updateAI();
+            }
+
+            p1.update();
+            p2.update();
+            checkCollisions();
+
+            // Game over check
+            if (p1.hp <= 0 || p2.hp <= 0) {
+                const loser = p1.hp <= 0 ? p1 : p2;
+                loser.isDead = true;
+                setTimeout(() => {
+                    gameActive = false;
+                    document.getElementById('overlay').style.display = 'flex';
+                    document.getElementById('win-msg').innerText = 
+                        p1.hp <= 0 ? "SYSTEM FAILURE: UNIT_01" : "SYSTEM FAILURE: UNIT_02";
+                }, 2000);
+            } else {
+                requestAnimationFrame(loop);
+            }
+        }
+
+        function setupControls() {
+            // Keyboard controls
+            const keyMap = {
+                'a': 'a', 'd': 'd', 'w': 'w',
+                'ArrowLeft': 'ArrowLeft', 'ArrowRight': 'ArrowRight', 'ArrowUp': 'ArrowUp'
+            };
+
+            // Touch controls
+            const touchMap = {
+                'p1-left': 'a', 'p1-right': 'd', 'p1-up': 'w', 'p1-atk': 'atk1',
+                'p2-left': 'ArrowLeft', 'p2-right': 'ArrowRight', 'p2-up': 'ArrowUp', 'p2-atk': 'atk2'
+            };
+
+            // Keyboard events
+            window.onkeydown = (e) => { 
+                keys[e.key] = true;
+                if(e.key === ' ') { e.preventDefault(); p1.attack(); }
+                if(e.key === 'Enter') { p2.attack(); }
+            };
+            window.onkeyup = (e) => { keys[e.key] = false; };
+
+            // Touch events
+            Object.entries(touchMap).forEach(([id, action]) => {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.ontouchstart = (e) => { 
+                        e.preventDefault(); 
+                        if (action === 'atk1') p1.attack();
+                        if (action === 'atk2') p2.attack();
+                    };
+                }
+            });
+        }
+
+        // Make functions global
+        window.startGame = startGame;
+        window.setDiff = setDiff;
+    </script>
+</body>
+</html>

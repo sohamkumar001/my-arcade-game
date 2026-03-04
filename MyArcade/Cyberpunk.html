@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NEON OVERDRIVE // Cyberpunk Runner</title>
+    <style>
+        :root {
+            --neon-purple: #bc13fe;
+            --neon-cyan: #05ffa1;
+            --neon-pink: #ff0055;
+            --bg-dark: #050505;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background: var(--bg-dark);
+            color: white;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+
+        #game-container {
+            position: relative;
+            width: 800px;
+            height: 400px;
+            border: 2px solid var(--neon-purple);
+            box-shadow: 0 0 20px var(--neon-purple);
+        }
+
+        canvas {
+            display: block;
+            background: #000;
+        }
+
+        /* UI Overlay */
+        #hud {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            padding: 20px;
+            box-sizing: border-box;
+            display: flex;
+            justify-content: space-between;
+            pointer-events: none;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            text-shadow: 0 0 10px var(--neon-cyan);
+        }
+
+        .stat-label { font-size: 12px; color: var(--neon-cyan); }
+        .stat-value { font-size: 24px; font-weight: bold; }
+
+        #menu {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            background: rgba(0, 0, 0, 0.85);
+            padding: 40px;
+            border: 1px solid var(--neon-pink);
+            display: block;
+        }
+
+        button {
+            background: transparent;
+            border: 2px solid var(--neon-cyan);
+            color: var(--neon-cyan);
+            padding: 10px 30px;
+            font-size: 18px;
+            cursor: pointer;
+            text-transform: uppercase;
+            transition: 0.3s;
+        }
+
+        button:hover {
+            background: var(--neon-cyan);
+            color: black;
+            box-shadow: 0 0 20px var(--neon-cyan);
+        }
+
+        .controls-hint {
+            margin-top: 20px;
+            font-size: 12px;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <div id="hud">
+        <div>
+            <div class="stat-label">Distance</div>
+            <div id="score-val" class="stat-value">0000</div>
+        </div>
+        <div>
+            <div class="stat-label">Multiplier</div>
+            <div id="mult-val" class="stat-value">x1</div>
+        </div>
+    </div>
+
+    <div id="menu">
+        <h1 style="color: var(--neon-pink); text-shadow: 0 0 15px var(--neon-pink);">NEON OVERDRIVE</h1>
+        <button id="start-btn">Initialize Link</button>
+        <div class="controls-hint">W / UP to Jump | S / DOWN to Slide</div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+</div>
+
+<script>
+/**
+ * CYBERPUNK ENDLESS RUNNER ENGINE
+ */
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const scoreEl = document.getElementById('score-val');
+const multEl = document.getElementById('mult-val');
+const menu = document.getElementById('menu');
+const startBtn = document.getElementById('start-btn');
+
+// Config
+canvas.width = 800;
+canvas.height = 400;
+
+const COLORS = {
+    player: '#05ffa1',
+    obstacle: '#ff0055',
+    track: '#bc13fe',
+    particles: '#05ffa1'
+};
+
+// Game State
+let gameState = 'START';
+let score = 0;
+let multiplier = 1;
+let gameSpeed = 5;
+let lastTime = 0;
+let distance = 0;
+
+// Input Handling
+const keys = {};
+window.addEventListener('keydown', e => keys[e.code] = true);
+window.addEventListener('keyup', e => keys[e.code] = false);
+
+/**
+ * UTILS: Easing and Randoms
+ */
+const easeOutQuad = t => t * (2 - t);
+
+/**
+ * PARTICLE SYSTEM
+ */
+class Particle {
+    constructor(x, y, color) {
+        this.reset(x, y, color);
+    }
+    reset(x, y, color) {
+        this.x = x;
+        this.y = y;
+        this.vx = (Math.random() - 0.5) * 10;
+        this.vy = (Math.random() - 0.5) * 10;
+        this.life = 1.0;
+        this.color = color;
+        this.active = true;
+    }
+    update(dt) {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life -= 0.02 * (dt / 16);
+        if (this.life <= 0) this.active = false;
+    }
+    draw() {
+        ctx.fillStyle = this.color;
+        ctx.globalAlpha = this.life;
+        ctx.fillRect(this.x, this.y, 3, 3);
+        ctx.globalAlpha = 1;
+    }
+}
+
+// Particle Pool
+const particles = [];
+function spawnParticles(x, y, color, count = 10) {
+    for (let i = 0; i < count; i++) {
+        let p = particles.find(p => !p.active);
+        if (!p) {
+            p = new Particle(x, y, color);
+            particles.push(p);
+        } else {
+            p.reset(x, y, color);
+        }
+    }
+}
+
+/**
+ * PLAYER OBJECT
+ */
+const player = {
+    x: 100,
+    y: 300,
+    w: 30,
+    h: 50,
+    baseY: 300,
+    vy: 0,
+    isJumping: false,
+    isSliding: false,
+    jumpTime: 0,
+    jumpDuration: 0.6, // Seconds
+    
+    update(dt) {
+        // Jump Logic (Easing)
+        if ((keys['ArrowUp'] || keys['KeyW']) && !this.isJumping && !this.isSliding) {
+            this.isJumping = true;
+            this.jumpTime = 0;
+        }
+
+        if (this.isJumping) {
+            this.jumpTime += dt / 1000;
+            let progress = this.jumpTime / this.jumpDuration;
+            if (progress > 1) {
+                this.isJumping = false;
+                this.y = this.baseY;
+                spawnParticles(this.x + 15, this.y + 50, COLORS.player);
+            } else {
+                // Parabolic arc using easeOutQuad for snappy up, gravity for down
+                let height = 120 * Math.sin(Math.PI * progress);
+                this.y = this.baseY - height;
+            }
+        }
+
+        // Slide Logic
+        if ((keys['ArrowDown'] || keys['KeyS']) && !this.isJumping) {
+            this.isSliding = true;
+            this.h = 25;
+            this.y = this.baseY + 25;
+            if (Math.random() > 0.8) spawnParticles(this.x, this.y + 25, COLORS.player, 1);
+        } else {
+            this.isSliding = false;
+            this.h = 50;
+            if (!this.isJumping) this.y = this.baseY;
+        }
+    },
+
+    draw() {
+        ctx.save();
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = COLORS.player;
+        ctx.fillStyle = COLORS.player;
+        // Motion Blur Effect
+        if (gameSpeed > 8) {
+            ctx.globalAlpha = 0.3;
+            ctx.fillRect(this.x - 10, this.y, this.w, this.h);
+            ctx.globalAlpha = 1;
+        }
+        ctx.fillRect(this.x, this.y, this.w, this.h);
+        ctx.restore();
+    }
+};
+
+/**
+ * OBSTACLE SYSTEM (Pooling)
+ */
+const obstacles = [];
+class Obstacle {
+    constructor() {
+        this.active = false;
+    }
+    spawn(x, type) {
+        this.x = x;
+        this.type = type; // 'low' (jump), 'high' (slide), 'gap' (jump)
+        this.w = 40;
+        this.h = type === 'high' ? 60 : 40;
+        this.y = type === 'high' ? 240 : 310;
+        this.active = true;
+        this.passed = false;
+    }
+    update(dt) {
+        this.x -= gameSpeed * (dt / 16);
+        if (this.x < -100) this.active = false;
+
+        // Collision Detection
+        if (this.active &&
+            player.x < this.x + this.w &&
+            player.x + player.w > this.x &&
+            player.y < this.y + this.h &&
+            player.y + player.h > this.y) {
+            gameOver();
+        }
+
+        // Score multiplier logic
+        if (!this.passed && this.x < player.x) {
+            this.passed = true;
+            multiplier += 0.1;
+        }
+    }
+    draw() {
+        ctx.save();
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = COLORS.obstacle;
+        ctx.fillStyle = COLORS.obstacle;
+        
+        if (this.type === 'high') {
+            // Laser gate
+            ctx.fillRect(this.x, 200, 10, 100);
+            ctx.fillRect(this.x + 30, 200, 10, 100);
+            ctx.globalAlpha = 0.5;
+            ctx.fillRect(this.x, 220, 40, 40); 
+        } else {
+            ctx.fillRect(this.x, this.y, this.w, this.h);
+        }
+        ctx.restore();
+    }
+}
+
+function spawnObstacle() {
+    const types = ['low', 'high'];
+    const type = types[Math.floor(Math.random() * types.length)];
+    let ob = obstacles.find(o => !o.active);
+    if (!ob) {
+        ob = new Obstacle();
+        obstacles.push(ob);
+    }
+    ob.spawn(canvas.width + 100, type);
+}
+
+/**
+ * BACKGROUND / DECORATION
+ */
+const stars = Array.from({length: 50}, () => ({
+    x: Math.random() * canvas.width,
+    y: Math.random() * 250,
+    s: Math.random() * 2
+}));
+
+function drawBackground(dt) {
+    // Parallax stars
+    ctx.fillStyle = "#fff";
+    stars.forEach(s => {
+        s.x -= (gameSpeed * 0.1) * (dt/16);
+        if (s.x < 0) s.x = canvas.width;
+        ctx.fillRect(s.x, s.y, s.s, s.s);
+    });
+
+    // Track
+    ctx.strokeStyle = COLORS.track;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(0, 350);
+    ctx.lineTo(canvas.width, 350);
+    ctx.stroke();
+
+    // Perspective lines (Grid)
+    ctx.lineWidth = 1;
+    ctx.globalAlpha = 0.2;
+    for (let i = 0; i < 10; i++) {
+        let x = ((distance * gameSpeed) + (i * 100)) % canvas.width;
+        ctx.beginPath();
+        ctx.moveTo(x, 350);
+        ctx.lineTo(x - 100, 400);
+        ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+}
+
+/**
+ * MAIN GAME LOOP
+ */
+let nextSpawn = 0;
+
+function update(time) {
+    if (gameState !== 'PLAYING') return;
+
+    const dt = time - lastTime;
+    lastTime = time;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Speed scaling
+    gameSpeed += 0.001 * (dt/16);
+    distance += gameSpeed * (dt/16);
+    score = Math.floor(distance / 10 * multiplier);
+    
+    // UI Update
+    scoreEl.innerText = score.toString().padStart(4, '0');
+    multEl.innerText = `x${multiplier.toFixed(1)}`;
+
+    drawBackground(dt);
+
+    // Spawn obstacles
+    nextSpawn -= dt;
+    if (nextSpawn <= 0) {
+        spawnObstacle();
+        nextSpawn = Math.max(600, 1500 - (gameSpeed * 50)); 
+    }
+
+    // Update Entities
+    player.update(dt);
+    player.draw();
+
+    obstacles.forEach(ob => {
+        if (ob.active) {
+            ob.update(dt);
+            ob.draw();
+        }
+    });
+
+    particles.forEach(p => {
+        if (p.active) {
+            p.update(dt);
+            p.draw();
+        }
+    });
+
+    requestAnimationFrame(update);
+}
+
+function gameOver() {
+    gameState = 'OVER';
+    menu.style.display = 'block';
+    menu.querySelector('h1').innerText = 'SYSTEM FAILURE';
+    startBtn.innerText = 'Reboot Neural Link';
+    spawnParticles(player.x, player.y, COLORS.obstacle, 30);
+}
+
+function resetGame() {
+    score = 0;
+    distance = 0;
+    multiplier = 1;
+    gameSpeed = 5;
+    obstacles.forEach(o => o.active = false);
+    particles.forEach(p => p.active = false);
+    gameState = 'PLAYING';
+    menu.style.display = 'none';
+    lastTime = performance.now();
+    requestAnimationFrame(update);
+}
+
+startBtn.addEventListener('click', resetGame);
+
+// Initial Static Draw
+drawBackground(16);
+player.draw();
+
+</script>
+</body>
+</html>
